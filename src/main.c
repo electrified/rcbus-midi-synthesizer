@@ -2,6 +2,7 @@
 #include "../include/chip_interface.h"
 #include "../include/chip_manager.h"
 #include "../include/midi_driver.h"
+#include "../include/ym2149.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -12,6 +13,14 @@ extern sound_chip_interface_t ym2149_interface;
 void print_help(void);
 void print_chip_status(void);
 void process_command(char cmd);
+void run_audio_test(void);
+
+// Simple delay function
+static void delay_ms(uint16_t ms) {
+    for (volatile uint16_t i = 0; i < ms * 100; i++) {
+        // Approximate delay - adjust based on CPU speed
+    }
+}
 
 // Main function
 int main(void) {
@@ -71,6 +80,11 @@ void process_command(char cmd) {
             printf("OPL3 not yet implemented.\n");
             break;
             
+        case 't':
+        case 'T':
+            run_audio_test();
+            break;
+            
         case '0':
         case 'q':
         case 'Q':
@@ -94,6 +108,7 @@ void print_help(void) {
     printf("\n=== RC2014 MIDI Synthesizer Commands ===\n");
     printf("h/H - Show this help\n");
     printf("s/S - Show system status\n");
+    printf("t/T - Test audio output (YM2149 only)\n");
     printf("p/P - Panic (all notes off)\n");
     printf("1   - Select YM2149 sound chip\n");
     printf("2   - Select OPL3 sound chip (not implemented)\n");
@@ -103,6 +118,7 @@ void print_help(void) {
     printf("CC#5-8   : Envelope controls (remaining knobs)\n");
     printf("CC#9-12  : Global effects (4 sliders)\n");
     printf("\nThe synthesizer processes MIDI input automatically.\n");
+    printf("Audio test works even without MIDI keyboard.\n");
     printf("===================================\n");
 }
 
@@ -110,4 +126,45 @@ void print_help(void) {
 void print_chip_status(void) {
     printf("\n");
     synthesizer_print_status();
+}
+
+// Run audio test sequence
+void run_audio_test(void) {
+    printf("\n=== Audio Test Mode ===\n");
+    
+    if (!current_chip) {
+        printf("No sound chip selected! Please select a chip first.\n");
+        return;
+    }
+    
+    if (current_chip->chip_id != CHIP_YM2149) {
+        printf("Audio test only implemented for YM2149 chip.\n");
+        printf("Current chip: %s\n", current_chip->name);
+        return;
+    }
+    
+    printf("Testing YM2149 audio output...\n");
+    printf("You should hear audio tones if your hardware is working.\n");
+    printf("Press Ctrl+C to interrupt if needed.\n\n");
+    
+    // Run the test sequence
+    ym2149_play_test_sequence();
+    
+    printf("Would you like to run additional tests? (y/n): ");
+    char response = getchar();
+    while (getchar() != '\n') {}  // Clear input buffer
+    
+    if (response == 'y' || response == 'Y') {
+        printf("\nRunning scale test...\n");
+        ym2149_play_scale();
+        
+        for (volatile uint16_t i = 0; i < 100000; i++) {
+            // Wait ~1 second
+        }
+        
+        printf("\nRunning arpeggio test...\n");
+        ym2149_play_arpeggio();
+    }
+    
+    printf("\n=== Audio Test Complete ===\n");
 }

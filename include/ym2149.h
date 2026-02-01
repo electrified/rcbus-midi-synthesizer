@@ -95,6 +95,14 @@ void ym2149_set_frequency(uint8_t voice, uint16_t freq);
 uint16_t ym2149_note_to_freq(uint8_t note);
 uint16_t ym2149_apply_pitch_bend(uint16_t base_freq, int16_t bend);
 
+// Chip detection
+uint8_t detect_ym2149(void);
+
+// Test functions
+void ym2149_play_test_sequence(void);
+void ym2149_play_arpeggio(void);
+void ym2149_play_scale(void);
+
 // External interface
 extern sound_chip_interface_t ym2149_interface;
 extern ym2149_voice_t ym2149_voices[3];  // 3 voices for YM2149

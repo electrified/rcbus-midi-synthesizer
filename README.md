@@ -86,6 +86,22 @@ make test       # Build and test
    ```
 3. In CP/M: `A>midisynth`
 
+### Testing Without MIDI Hardware
+Even without a MIDI keyboard, you can test the synthesizer:
+
+1. Run the program: `A>midisynth`
+2. Select YM2149 chip: `1`
+3. Check status: `s` (should show YM2149 detected)
+4. Run audio test: `t`
+5. Listen for tones through your audio output
+
+The test will play:
+- Individual channel tests (C, E, G)
+- All channels together
+- Volume sweep up/down
+- Noise generator test
+- Musical scale and arpeggio (optional)
+
 ## MIDI CC Mapping
 
 ### Knobs (CC#1-8)
@@ -106,6 +122,7 @@ make test       # Build and test
 ### Interactive Commands
 - `h` - Show help
 - `s` - Show system status
+- `t` - Test audio output (YM2149 only)
 - `p` - Panic (all notes off)
 - `1` - Select YM2149 chip
 - `2` - Select OPL3 chip (future)
@@ -127,6 +144,19 @@ make test       # Build and test
 │  (CC + Notes)│    │  Interface     │    │  (Selection)│
 └─────────────┘    └──────────────────┘    └─────────────┘
 ```
+
+### Hardware Detection
+- **YM2149 PSG**: Automatic detection via register read/write testing
+- **OPL3 FM**: Future support with hardware detection
+- **Status Command**: Press 's' to see detected hardware status
+- **Robust Testing**: Multiple register verification with state preservation
+
+### Audio Testing
+- **Test Command**: Press 't' to run audio test sequence
+- **No MIDI Required**: Works without MIDI keyboard connected
+- **Multi-Test**: Individual channels, volume sweep, noise generator
+- **Musical Tests**: Scale and arpeggio demonstrations
+- **Diagnostic**: Verifies audio hardware is working properly
 
 ### File Structure
 - `src/chips/` - Sound chip drivers (YM2149, OPL3)

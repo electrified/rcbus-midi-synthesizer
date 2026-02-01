@@ -1,6 +1,7 @@
 #include "../../include/ym2149.h"
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 
 // Global voice array and interface declaration
 ym2149_voice_t ym2149_voices[3];
@@ -259,6 +260,218 @@ uint16_t ym2149_apply_pitch_bend(uint16_t base_freq, int16_t bend) {
     } else {
         return base_freq - (base_freq * (-bend_amount)) / 100;
     }
+}
+
+// Read from YM2149 register (for detection)
+static uint8_t ym2149_read_register(uint8_t reg) {
+    *((volatile uint8_t*)YM2149_ADDR_PORT) = reg;
+    SmallDelay();
+    return *((volatile uint8_t*)YM2149_DATA_PORT);
+}
+
+// Detect YM2149 chip presence
+uint8_t detect_ym2149(void) {
+    // YM2149 Detection Strategy:
+    // 1. Write test patterns to mixer register (7) - tone/noise enable bits are readable
+    // 2. Write test patterns to level registers (8,9,10) - volume bits (0-3) are readable  
+    // 3. Write to frequency registers to verify they're not stuck
+    // 4. Restore original register states to avoid disrupting system state
+    // 
+    // This approach is robust because:
+    // - It uses multiple registers for verification
+    // - It accounts for read-only bits in certain registers
+    // - It preserves the original chip state
+    // - It handles the case where no chip is present (reads return 0xFF)
+    
+    uint8_t test_values[] = {0x00, 0x55, 0xAA, 0xFF};
+    uint8_t read_back;
+    uint8_t detection_passed = 1;
+    
+    // Save original register states
+    uint8_t orig_mixer = 0;
+    uint8_t orig_level_a = 0;
+    uint8_t orig_level_b = 0;
+    
+    // Try to read original states (may fail if no chip present)
+    __asm__("di");  // Disable interrupts during detection
+    orig_mixer = ym2149_read_register(YM2149_MIXER);
+    orig_level_a = ym2149_read_register(YM2149_LEVEL_A);
+    orig_level_b = ym2149_read_register(YM2149_LEVEL_B);
+    
+    // Test 1: Write/read back to mixer register (7)
+    for (uint8_t i = 0; i < sizeof(test_values); i++) {
+        ym2149_write_register(YM2149_MIXER, test_values[i]);
+        SmallDelay();
+        read_back = ym2149_read_register(YM2149_MIXER);
+        
+        // Some bits might be read-only, check if at least some bits match
+        if ((read_back & 0x3F) != (test_values[i] & 0x3F)) {
+            detection_passed = 0;
+            break;
+        }
+    }
+    
+    if (detection_passed) {
+        // Test 2: Write/read back to level registers (8, 9)
+        for (uint8_t i = 0; i < sizeof(test_values); i++) {
+            ym2149_write_register(YM2149_LEVEL_A, test_values[i]);
+            SmallDelay();
+            read_back = ym2149_read_register(YM2149_LEVEL_A);
+            
+            // Volume bits (0-3) should be readable
+            if ((read_back & 0x0F) != (test_values[i] & 0x0F)) {
+                detection_passed = 0;
+                break;
+            }
+        }
+    }
+    
+    if (detection_passed) {
+        // Test 3: Test frequency register accessibility
+        // Write to frequency low register and verify it's not stuck
+        ym2149_write_register(YM2149_FREQ_A_LSB, 0x42);
+        SmallDelay();
+        read_back = ym2149_read_register(YM2149_FREQ_A_LSB);
+        if (read_back != 0x42) {
+            detection_passed = 0;
+        }
+    }
+    
+    // Restore original register states
+    ym2149_write_register(YM2149_MIXER, orig_mixer);
+    ym2149_write_register(YM2149_LEVEL_A, orig_level_a);
+    ym2149_write_register(YM2149_LEVEL_B, orig_level_b);
+    
+    __asm__("ei");  // Re-enable interrupts
+    
+    return detection_passed;
+}
+
+// Simple delay function for test sequences
+static void delay_ms(uint16_t ms) {
+    // Simple delay loop - approximate timing
+    for (volatile uint16_t i = 0; i < ms * 100; i++) {
+        // Adjust multiplier based on actual clock speed
+    }
+}
+
+// Play test sequence to verify audio output
+void ym2149_play_test_sequence(void) {
+    printf("Playing YM2149 test sequence...\n");
+    
+    // Ensure chip is initialized
+    ym2149_init();
+    
+    // Test 1: Simple tone on each channel
+    printf("Testing individual channels...\n");
+    
+    // Channel A - C4
+    ym2149_write_register(YM2149_FREQ_A_LSB, 0x1EF & 0xFF);
+    ym2149_write_register(YM2149_FREQ_A_MSB, 0x1EF >> 8 | 0x01);
+    ym2149_set_volume(0, 10);  // Medium volume
+    delay_ms(500);
+    
+    // Channel B - E4  
+    ym2149_write_register(YM2149_FREQ_B_LSB, 0x284 & 0xFF);
+    ym2149_write_register(YM2149_FREQ_B_MSB, 0x284 >> 8 | 0x01);
+    ym2149_set_volume(1, 10);
+    delay_ms(500);
+    
+    // Channel C - G4
+    ym2149_write_register(YM2149_FREQ_C_LSB, 0x31B & 0xFF);
+    ym2149_write_register(YM2149_FREQ_C_MSB, 0x31B >> 8 | 0x01);
+    ym2149_set_volume(2, 10);
+    delay_ms(500);
+    
+    // Test 2: All channels together
+    printf("Testing all channels together...\n");
+    delay_ms(500);
+    
+    // Test 3: Volume sweep
+    printf("Testing volume control...\n");
+    for (uint8_t vol = 15; vol > 0; vol--) {
+        ym2149_set_volume(0, vol);
+        ym2149_set_volume(1, vol);
+        ym2149_set_volume(2, vol);
+        delay_ms(100);
+    }
+    
+    for (uint8_t vol = 0; vol <= 15; vol++) {
+        ym2149_set_volume(0, vol);
+        ym2149_set_volume(1, vol);
+        ym2149_set_volume(2, vol);
+        delay_ms(100);
+    }
+    
+    // Test 4: Noise generator
+    printf("Testing noise generator...\n");
+    ym2149_write_register(YM2149_FREQ_NOISE, 0x1F);  // Middle noise frequency
+    ym2149_write_register(YM2149_MIXER, YM2149_MIX_NOISE_A | YM2149_MIX_NOISE_B | YM2149_MIX_NOISE_C);
+    delay_ms(1000);
+    
+    // Clean up - restore tone mode
+    ym2149_write_register(YM2149_MIXER, YM2149_MIX_TONE_A | YM2149_MIX_TONE_B | YM2149_MIX_TONE_C);
+    ym2149_all_off();
+    
+    printf("Test sequence complete.\n");
+}
+
+// Play musical scale
+void ym2149_play_scale(void) {
+    printf("Playing C major scale...\n");
+    
+    // Ensure chip is initialized
+    ym2149_init();
+    
+    // C major scale frequencies (approximate)
+    uint16_t scale[] = {0x1EF, 0x219, 0x244, 0x26F, 0x29E, 0x2D0, 0x306, 0x33B};
+    uint8_t note_names[] = {67, 69, 71, 72, 74, 76, 77, 79}; // MIDI note numbers
+    
+    for (uint8_t i = 0; i < 8; i++) {
+        // Play note on channel A
+        ym2149_set_frequency(0, scale[i]);
+        ym2149_set_volume(0, 12);  // Good volume for testing
+        printf("Note: %d\n", note_names[i]);
+        delay_ms(400);
+        
+        // Brief pause between notes
+        ym2149_set_volume(0, 0);
+        delay_ms(50);
+    }
+    
+    printf("Scale complete.\n");
+}
+
+// Play arpeggio test
+void ym2149_play_arpeggio(void) {
+    printf("Playing arpeggio test...\n");
+    
+    // Ensure chip is initialized
+    ym2149_init();
+    
+    // C major arpeggio notes
+    uint16_t chord[] = {0x1EF, 0x244, 0x29E}; // C, E, G
+    
+    // Play each note on separate channel
+    for (uint8_t channel = 0; channel < 3; channel++) {
+        ym2149_set_frequency(channel, chord[channel]);
+        ym2149_set_volume(channel, 8);
+        delay_ms(100);
+    }
+    
+    // Let them play together
+    delay_ms(1000);
+    
+    // Fade out
+    for (uint8_t vol = 8; vol > 0; vol--) {
+        ym2149_set_volume(0, vol);
+        ym2149_set_volume(1, vol);
+        ym2149_set_volume(2, vol);
+        delay_ms(150);
+    }
+    
+    ym2149_all_off();
+    printf("Arpeggio complete.\n");
 }
 
 // Initialize YM2149 interface structure

@@ -75,15 +75,7 @@ sound_chip_interface_t* chip_manager_get_current(void) {
     return current_chip;
 }
 
-// Test for YM2149 presence
-uint8_t detect_ym2149(void) {
-    // Simple detection: try to write to YM2149 registers
-    // In a real implementation, we'd verify the chip responds
-    
-    // Test by writing to a register and reading back
-    // For now, assume YM2149 is present at default address
-    return 1;  // Assume present for now
-}
+// Test for YM2149 presence is now implemented in ym2149.c
 
 // Test for OPL3 presence
 uint8_t detect_opl3(void) {

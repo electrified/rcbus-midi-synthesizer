@@ -1,5 +1,6 @@
 #include "../../include/synthesizer.h"
 #include "../../include/midi_driver.h"
+#include "../../include/chip_manager.h"
 #include <stdio.h>
 
 // Simple voice allocation for current chip
@@ -97,18 +98,37 @@ void synthesizer_panic(void) {
 void synthesizer_print_status(void) {
     printf("=== RC2014 MIDI Synthesizer Status ===\n");
     
+    // Show detected hardware
+    printf("Hardware Detection:\n");
+    if (available_chips & CHIP_YM2149) {
+        printf("  ✓ YM2149 PSG detected\n");
+    } else {
+        printf("  ✗ YM2149 PSG not detected\n");
+    }
+    if (available_chips & CHIP_OPL3) {
+        printf("  ✓ OPL3 FM detected\n");
+    } else {
+        printf("  ✗ OPL3 FM not detected\n");
+    }
+    printf("\n");
+    
     if (current_chip) {
         printf("Active Chip: %s\n", current_chip->name);
         printf("Voice Count: %d\n", current_chip->voice_count);
         
         printf("Active Voices:\n");
+        uint8_t active_count = 0;
         for (uint8_t i = 0; i < current_chip->voice_count; i++) {
             if (current_chip->voices[i].active) {
                 printf("  Voice %d: Note %d, Vel %d, Ch %d\n",
                        i, current_chip->voices[i].midi_note,
                        current_chip->voices[i].velocity,
                        current_chip->voices[i].channel);
+                active_count++;
             }
+        }
+        if (active_count == 0) {
+            printf("  (No active voices)\n");
         }
     } else {
         printf("No sound chip selected!\n");
