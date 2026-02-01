@@ -3,6 +3,7 @@
 #include "../include/chip_manager.h"
 #include "../include/midi_driver.h"
 #include "../include/ym2149.h"
+#include "../include/port_config.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -45,8 +46,6 @@ int main(void) {
             while (getchar() != '\n') {}
         }
     }
-    
-    return 0;
 }
 
 // Process user commands
@@ -85,6 +84,25 @@ void process_command(char cmd) {
             run_audio_test();
             break;
             
+        case 'i':
+        case 'I':
+            printf("Current I/O ports:\n");
+            printf("  Register port: 0x%02X\n", ym2149_ports.addr_port);
+            printf("  Data port: 0x%02X\n", ym2149_ports.data_port);
+            break;
+            
+        case 'r':
+        case 'R':
+            printf("Reloading port configuration...\n");
+            if (port_config_load_from_file("ports.conf")) {
+                printf("Configuration loaded successfully.\n");
+                printf("  Register port: 0x%02X\n", ym2149_ports.addr_port);
+                printf("  Data port: 0x%02X\n", ym2149_ports.data_port);
+            } else {
+                printf("Failed to load ports.conf - using defaults.\n");
+            }
+            break;
+            
         case '0':
         case 'q':
         case 'Q':
@@ -108,6 +126,8 @@ void print_help(void) {
     printf("\n=== RC2014 MIDI Synthesizer Commands ===\n");
     printf("h/H - Show this help\n");
     printf("s/S - Show system status\n");
+    printf("i/I - Show current I/O ports\n");
+    printf("r/R - Reload port configuration\n");
     printf("t/T - Test audio output (YM2149 only)\n");
     printf("p/P - Panic (all notes off)\n");
     printf("1   - Select YM2149 sound chip\n");
@@ -158,8 +178,10 @@ void run_audio_test(void) {
         printf("\nRunning scale test...\n");
         ym2149_play_scale();
         
-        for (volatile uint16_t i = 0; i < 100000; i++) {
-            // Wait ~1 second
+        for (volatile uint8_t i = 0; i < 200; i++) {
+            for (volatile uint8_t j = 0; j < 200; j++) {
+                // Nested loops for delay
+            }
         }
         
         printf("\nRunning arpeggio test...\n");

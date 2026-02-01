@@ -3,10 +3,11 @@
 
 #include <stdint.h>
 #include "chip_interface.h"
+#include "port_config.h"
 
 // YM2149 Register definitions
-#define YM2149_ADDR_PORT     0xC0    // Address register (based on existing OPL3 project)
-#define YM2149_DATA_PORT     0xD0    // Data register
+#define YM2149_ADDR_PORT     ym2149_ports.addr_port    // Address register (configurable)
+#define YM2149_DATA_PORT     ym2149_ports.data_port    // Data register (configurable)
 
 // YM2149 Register addresses
 #define YM2149_FREQ_A_LSB     0x00     // Channel A frequency low byte

@@ -12,14 +12,14 @@ rm -f *.com *.bin *.lst *.ihx *.hex *.map *.dsk
 # Compile and create CP/M .com file using z88dk Docker container
 echo "Compiling source files and creating CP/M executable..."
 docker run --rm -v "$(pwd):/workspace" -w /workspace z88dk/z88dk:latest \
-    zcc +cpm -subtype=z80pack -vn -SO3 -O3 --opt-code-size -clib=sdcc_iy \
+    zcc +cpm -vn -SO3 -O3 --opt-code-size \
     -Iinclude \
     src/main.c src/core/synthesizer.c src/core/chip_manager.c src/midi/midi_driver.c src/chips/ym2149.c \
     -create-app -o midisynth
 
 echo "Creating CP/M disk image for RC2014 MAME emulation..."
 docker run --rm -v "$(pwd):/workspace" -w /workspace z88dk/z88dk:latest \
-    /opt/z88dk/bin/z88dk-appmake +cpmdisk --format z80pack --binfile midisynth_CODE.bin --force-com-ext -o midisynth
+    /opt/z88dk/bin/z88dk-appmake +cpmdisk --format z80pack --binfile MIDISYNTH.COM --force-com-ext -o midisynth
 
 echo "Build complete! Output files:"
 echo "  - midisynth.com (CP/M executable)"

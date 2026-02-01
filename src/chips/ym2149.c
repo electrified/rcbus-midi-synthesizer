@@ -2,6 +2,66 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+
+// Port configuration implementation
+port_config_t ym2149_ports;
+
+void port_config_init(void) {
+    ym2149_ports.addr_port = 0xD8;  // R5 RC2014 YM2149 register port
+    ym2149_ports.data_port = 0xD0;  // R5 RC2014 YM2149 data port
+}
+
+void port_config_set(unsigned char addr_port, unsigned char data_port) {
+    ym2149_ports.addr_port = addr_port;
+    ym2149_ports.data_port = data_port;
+}
+
+int port_config_load_from_file(const char* filename) {
+    FILE* file = fopen(filename, "r");
+    if (!file) {
+        return 0;  // File not found or cannot open
+    }
+    
+    char line[256];
+    unsigned char addr_port = 0xD8;
+    unsigned char data_port = 0xD0;
+    
+    while (fgets(line, sizeof(line), file)) {
+        // Skip comments and empty lines
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') {
+            continue;
+        }
+        
+        // Parse key=value format
+        char* key = strtok(line, "=");
+        char* value = strtok(NULL, "=\n\r");
+        
+        if (key && value) {
+            if (strcmp(key, "addr_port") == 0) {
+                addr_port = (unsigned char)strtoul(value, NULL, 0);
+            } else if (strcmp(key, "data_port") == 0) {
+                data_port = (unsigned char)strtoul(value, NULL, 0);
+            }
+        }
+    }
+    
+    fclose(file);
+    port_config_set(addr_port, data_port);
+    return 1;
+}
+
+int port_config_validate(void) {
+    // Basic validation: ports should be in reasonable I/O range
+    if (ym2149_ports.addr_port == ym2149_ports.data_port) {
+        return 0;  // Same port for address and data is invalid
+    }
+    
+    // Ports are always in valid range for unsigned char
+    // No range validation needed for unsigned char types
+    
+    return 1;
+}
 
 // Global voice array and interface declaration
 ym2149_voice_t ym2149_voices[3];
@@ -28,6 +88,13 @@ void ym2149_write_register(uint8_t reg, uint8_t data) {
 
 // Initialize YM2149 chip
 void ym2149_init(void) {
+    // Initialize port configuration with defaults if not already set
+    static int config_initialized = 0;
+    if (!config_initialized) {
+        port_config_init();
+        config_initialized = 1;
+    }
+    
     // Clear all voices
     memset(ym2149_voices, 0, sizeof(ym2149_voices));
     
@@ -91,9 +158,8 @@ void ym2149_note_off(uint8_t voice) {
     
     // Disable the voice by clearing the MSB of frequency register
     uint8_t reg_msb = YM2149_FREQ_A_MSB + (voice * 2);
-    uint8_t current_freq;
-    
-    // Read current frequency (if we had a read function, for now just write with MSB cleared)
+    // Note: Reading current frequency would require YM2149 read capability
+    // For now we just write with MSB cleared to disable voice
     ym2149_write_register(reg_msb, 0x00);  // Clear MSB to disable voice
 }
 
@@ -166,12 +232,16 @@ void ym2149_set_release(uint8_t voice, uint8_t release) {
 
 // Set vibrato depth (global effect)
 void ym2149_set_vibrato(uint8_t depth) {
+    // Suppress unused parameter warning
+    (void)depth;
     // YM2149 doesn't have hardware vibrato
     // Could implement via frequency modulation in software if needed
 }
 
 // Set tremolo rate (global effect)
 void ym2149_set_tremolo(uint8_t rate) {
+    // Suppress unused parameter warning
+    (void)rate;
     // YM2149 doesn't have hardware tremolo
     // Could implement via volume modulation if needed
 }

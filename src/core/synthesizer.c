@@ -5,6 +5,10 @@
 
 // Simple voice allocation for current chip
 uint8_t allocate_voice(uint8_t note, uint8_t velocity, uint8_t channel) {
+    // Suppress unused parameter warnings
+    (void)note;
+    (void)velocity;
+    (void)channel;
     if (!current_chip) return 0xFF;  // No chip selected
     
     // Find free voice

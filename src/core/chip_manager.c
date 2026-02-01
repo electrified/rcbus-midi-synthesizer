@@ -1,5 +1,6 @@
 #include "../../include/chip_manager.h"
 #include "../../include/ym2149.h"
+#include "../../include/port_config.h"
 #include <stdint.h>
 
 // Current chip pointer
@@ -13,6 +14,10 @@ extern sound_chip_interface_t ym2149_interface;
 void chip_manager_init(void) {
     current_chip = 0;
     available_chips = 0;
+    
+    // Initialize port configuration and try to load from file
+    port_config_init();
+    port_config_load_from_file("ports.conf");
     
     // Detect available sound chips
     chip_manager_detect_chips();
