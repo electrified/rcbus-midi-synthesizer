@@ -78,11 +78,11 @@ static void SmallDelay(void) {
 // Low-level register write function
 void ym2149_write_register(uint8_t reg, uint8_t data) {
     // Write address register first
-    *((volatile uint8_t*)YM2149_ADDR_PORT) = reg;
+    outp(YM2149_ADDR_PORT, reg);
     SmallDelay();
     
     // Then write data register
-    *((volatile uint8_t*)YM2149_DATA_PORT) = data;
+    outp(YM2149_DATA_PORT, data);
     SmallDelay();
 }
 
@@ -334,9 +334,9 @@ uint16_t ym2149_apply_pitch_bend(uint16_t base_freq, int16_t bend) {
 
 // Read from YM2149 register (for detection)
 static uint8_t ym2149_read_register(uint8_t reg) {
-    *((volatile uint8_t*)YM2149_ADDR_PORT) = reg;
+    outp(YM2149_ADDR_PORT, reg);
     SmallDelay();
-    return *((volatile uint8_t*)YM2149_DATA_PORT);
+    return inp(YM2149_DATA_PORT);
 }
 
 // Detect YM2149 chip presence
