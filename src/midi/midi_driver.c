@@ -1,5 +1,6 @@
 #include "../../include/midi_driver.h"
 #include "../../include/chip_interface.h"
+#include "../../include/synthesizer.h"
 #include <stdint.h>
 
 // Global MIDI state
@@ -61,14 +62,28 @@ void midi_driver_process_input(void) {
 
 // Process incoming MIDI byte
 void midi_process_byte(uint8_t byte) {
+    // System Realtime (0xF8-0xFF): can appear mid-message, never touch parser state
+    if (byte >= 0xF8) {
+        // Could handle clock (0xF8), start (0xFA), stop (0xFC) here if needed
+        return;
+    }
+
     // Check for status byte (MSB set)
     if (byte & 0x80) {
-        // New message
+        // System Common (0xF0-0xF7): clear running status
+        if (byte >= 0xF0) {
+            midi_state.status = 0;
+            midi_state.byte_count = 0;
+            midi_state.expected_bytes = 0;
+            return;
+        }
+
+        // Channel voice message
         midi_state.status = byte;
         midi_state.channel = byte & 0x0F;
         midi_state.command = byte & 0xF0;
         midi_state.byte_count = 0;
-        
+
         // Determine expected bytes based on command
         switch (midi_state.command) {
             case MIDI_NOTE_OFF:
@@ -112,26 +127,26 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
     switch (command) {
         case MIDI_NOTE_ON:
             if (current_chip && current_chip->note_on) {
-                // Find free voice and play note
-                for (uint8_t i = 0; i < current_chip->voice_count; i++) {
-                    if (!current_chip->voices[i].active) {
-                        current_chip->note_on(i, data1, data2, channel);
-                        break;
+                if (data2 == 0) {
+                    // Note-on with velocity 0 is equivalent to note-off
+                    uint8_t voice = find_voice_by_note(data1, channel);
+                    if (voice != 0xFF) {
+                        current_chip->note_off(voice);
+                    }
+                } else {
+                    uint8_t voice = allocate_voice(data1, data2, channel);
+                    if (voice != 0xFF) {
+                        current_chip->note_on(voice, data1, data2, channel);
                     }
                 }
             }
             break;
-            
+
         case MIDI_NOTE_OFF:
             if (current_chip && current_chip->note_off) {
-                // Find voice playing this note and turn it off
-                for (uint8_t i = 0; i < current_chip->voice_count; i++) {
-                    if (current_chip->voices[i].active && 
-                        current_chip->voices[i].midi_note == data1 &&
-                        current_chip->voices[i].channel == channel) {
-                        current_chip->note_off(i);
-                        break;
-                    }
+                uint8_t voice = find_voice_by_note(data1, channel);
+                if (voice != 0xFF) {
+                    current_chip->note_off(voice);
                 }
             }
             break;
@@ -216,10 +231,11 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                         }
                         break;
                         
-                    case 11:  // Pitch bend
+                    case 11:  // Expression / pitch bend via CC
                         if (current_chip->set_pitch_bend) {
-                            int16_t bend = (data2 << 7) | data1;
-                            current_chip->set_pitch_bend(bend - 8192);  // Center at 0
+                            // Scale CC value (0-127) to pitch bend range
+                            int16_t bend = ((int16_t)data2 - 64) * 128;
+                            current_chip->set_pitch_bend(bend);
                         }
                         break;
                         

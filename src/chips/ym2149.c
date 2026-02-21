@@ -63,15 +63,13 @@ int port_config_validate(void) {
     return 1;
 }
 
-// Global voice array and interface declaration
-ym2149_voice_t ym2149_voices[3];
-sound_chip_interface_t ym2149_interface;
+// Global voice arrays — split to match voice_t stride expected by chip_interface
+voice_t ym2149_voices[3];
+ym2149_voice_extra_t ym2149_voice_extra[3];
 
-// Small delay function (from your existing code)
+// Small delay function — volatile counter prevents optimisation away
 static void SmallDelay(void) {
-    uint8_t i;
-    for (i = 0; i < 10; i++) {
-        // Simple delay loop
+    for (volatile uint8_t i = 0; i < 10; i++) {
     }
 }
 
@@ -97,12 +95,13 @@ void ym2149_init(void) {
     
     // Clear all voices
     memset(ym2149_voices, 0, sizeof(ym2149_voices));
+    memset(ym2149_voice_extra, 0, sizeof(ym2149_voice_extra));
     
     // Initialize to known state
     ym2149_reset();
     
-    // Set up default mixer (enable tone on all channels)
-    ym2149_write_register(YM2149_MIXER, YM2149_MIX_TONE_A | YM2149_MIX_TONE_B | YM2149_MIX_TONE_C);
+    // Set up default mixer (enable tone on all channels, disable noise)
+    ym2149_write_register(YM2149_MIXER, YM2149_MIX_ALL_TONE);
     
     // Set default envelope shapes for each channel
     ym2149_write_register(YM2149_LEVEL_A, YM2149_VOLUME_FIXED | 0x0F);  // Max volume
@@ -113,9 +112,13 @@ void ym2149_init(void) {
     ym2149_write_register(YM2149_FREQ_NOISE, 0x1F);  // Middle frequency
 }
 
-// Reset YM2149 to silence
+// Reset YM2149 to silence - zero all 14 registers
 void ym2149_reset(void) {
-    ym2149_all_off();
+    for (uint8_t reg = 0; reg <= 0x0D; reg++) {
+        ym2149_write_register(reg, 0x00);
+    }
+    // Disable all outputs after zeroing
+    ym2149_write_register(YM2149_MIXER, YM2149_MIX_ALL_OFF);
 }
 
 // Turn off all voices
@@ -128,73 +131,74 @@ void ym2149_all_off(void) {
 // Note on function
 void ym2149_note_on(uint8_t voice, uint8_t note, uint8_t velocity, uint8_t channel) {
     if (voice >= 3) return;  // YM2149 only has 3 voices
-    
-    ym2149_voice_t* v = &ym2149_voices[voice];
-    
+
+    voice_t* v = &ym2149_voices[voice];
+    ym2149_voice_extra_t* vx = &ym2149_voice_extra[voice];
+
     // Store note information
     v->active = 1;
     v->midi_note = note;
     v->velocity = velocity;
     v->channel = channel;
     v->start_time = 0;  // Could implement timer if needed
-    
+
     // Convert MIDI note to YM2149 frequency
-    v->frequency = ym2149_note_to_freq(note);
-    
+    vx->frequency = ym2149_note_to_freq(note);
+
     // Set frequency (low and high bytes)
-    ym2149_set_frequency(voice, v->frequency);
-    
+    ym2149_set_frequency(voice, vx->frequency);
+
     // Set volume based on velocity (0-127 → 0-15)
-    v->volume = (velocity * 15) / 127;
-    ym2149_set_volume(voice, v->volume);
+    vx->volume = (velocity * 15) / 127;
+    ym2149_set_volume(voice, vx->volume);
 }
 
 // Note off function
 void ym2149_note_off(uint8_t voice) {
     if (voice >= 3) return;
-    
-    ym2149_voice_t* v = &ym2149_voices[voice];
-    v->active = 0;
-    
-    // Disable the voice by clearing the MSB of frequency register
-    uint8_t reg_msb = YM2149_FREQ_A_MSB + (voice * 2);
-    // Note: Reading current frequency would require YM2149 read capability
-    // For now we just write with MSB cleared to disable voice
-    ym2149_write_register(reg_msb, 0x00);  // Clear MSB to disable voice
+
+    ym2149_voices[voice].active = 0;
+
+    // Silence the channel by setting volume to 0
+    uint8_t level_reg = YM2149_LEVEL_A + voice;
+    ym2149_write_register(level_reg, 0x00);
 }
 
 // Set voice volume
 void ym2149_set_volume(uint8_t voice, uint8_t volume) {
     if (voice >= 3) return;
-    
-    ym2149_voice_t* v = &ym2149_voices[voice];
-    v->volume = volume;
-    
+
+    ym2149_voice_extra_t* vx = &ym2149_voice_extra[voice];
+    vx->volume = volume;
+
     // Clamp volume to 0-15
     if (volume > 15) volume = 15;
-    
-    // Get current register value and preserve envelope mode
+
     uint8_t level_reg = YM2149_LEVEL_A + voice;
-    uint8_t current_val = v->envelope_shape;  // Store current envelope setting
-    ym2149_write_register(level_reg, current_val | volume);
+    uint8_t reg_val = volume;
+    if (vx->envelope_enabled) {
+        reg_val |= YM2149_VOLUME_ENV;
+    }
+    ym2149_write_register(level_reg, reg_val);
 }
 
 // Set attack time (map to envelope frequency)
 void ym2149_set_attack(uint8_t voice, uint8_t attack) {
     if (voice >= 3) return;
-    
-    ym2149_voice_t* v = &ym2149_voices[voice];
-    
+
+    ym2149_voice_extra_t* vx = &ym2149_voice_extra[voice];
+
     // Map CC value (0-127) to envelope frequency
     uint16_t env_freq = (attack * 255) / 127;
-    
+
     // Set envelope frequency registers
     ym2149_write_register(YM2149_FREQ_ENV_LSB, env_freq & 0xFF);
     ym2149_write_register(YM2149_FREQ_ENV_MSB, (env_freq >> 8) & 0xFF);
-    
-    // Switch to envelope mode if not already
+
+    // Switch to envelope mode
+    vx->envelope_enabled = 1;
     uint8_t level_reg = YM2149_LEVEL_A + voice;
-    ym2149_write_register(level_reg, YM2149_VOLUME_ENV | v->volume);
+    ym2149_write_register(level_reg, YM2149_VOLUME_ENV | vx->volume);
 }
 
 // Set decay time (part of envelope shaping)
@@ -207,7 +211,7 @@ void ym2149_set_decay(uint8_t voice, uint8_t decay) {
         envelope_shape = YM2149_ENV_TRIANGLE_DECAY;
     }
     
-    ym2149_voices[voice].envelope_shape = envelope_shape;
+    ym2149_voice_extra[voice].envelope_shape = envelope_shape;
     ym2149_write_register(YM2149_SHAPE_ENV, envelope_shape);
 }
 
@@ -250,18 +254,19 @@ void ym2149_set_tremolo(uint8_t rate) {
 void ym2149_set_pitch_bend(int16_t bend) {
     // Apply pitch bend to all active voices
     for (uint8_t i = 0; i < 3; i++) {
-        if (ym2149_voices[i].active) {
-            uint16_t base_freq = ym2149_note_to_freq(ym2149_voices[i].midi_note);
+        voice_t* v = &ym2149_voices[i];
+        if (v->active) {
+            uint16_t base_freq = ym2149_note_to_freq(v->midi_note);
             uint16_t bent_freq = ym2149_apply_pitch_bend(base_freq, bend);
             ym2149_set_frequency(i, bent_freq);
         }
     }
 }
 
-// Set modulation depth
+// Set modulation depth (same as vibrato on YM2149)
 void ym2149_set_modulation(uint8_t depth) {
-    // Could implement as vibrato or tremolo effect
-    ym2149_set_vibrato(depth);
+    (void)depth;
+    // YM2149 doesn't have hardware modulation
 }
 
 // Set preset
@@ -286,7 +291,7 @@ void ym2149_set_preset(uint8_t preset) {
 // Emergency panic - silence everything
 void ym2149_panic(void) {
     ym2149_all_off();
-    ym2149_write_register(YM2149_MIXER, 0x00);  // Disable all outputs
+    ym2149_write_register(YM2149_MIXER, YM2149_MIX_ALL_OFF);  // Disable all outputs
 }
 
 // Set frequency for a voice
@@ -297,26 +302,34 @@ void ym2149_set_frequency(uint8_t voice, uint16_t freq) {
     uint8_t freq_msb = YM2149_FREQ_A_MSB + (voice * 2);
     
     ym2149_write_register(freq_lsb, freq & 0xFF);
-    ym2149_write_register(freq_msb, (freq >> 8) | 0x01);  // Set MSB to enable voice
+    ym2149_write_register(freq_msb, (freq >> 8) & 0x0F);  // Only lower 4 bits valid
 }
 
-// MIDI note to frequency conversion (simplified)
+// MIDI note to YM2149 tone period conversion
+// Table covers MIDI notes 24 (C1) to 96 (C7)
+// TP = round(1843200 / (16 * freq)) = round(115200 / freq)
+// Higher period = lower pitch (YM2149 convention)
 uint16_t ym2149_note_to_freq(uint8_t note) {
-    // Basic frequency lookup table (can be expanded)
-    static const uint16_t note_freq[] = {
-        0x000, 0x006, 0x00C, 0x013, 0x019, 0x022, 0x02A, 0x033,
-        0x03D, 0x048, 0x054, 0x061, 0x070, 0x080, 0x091, 0x0A4,
-        0x0B8, 0x0CE, 0x0E5, 0x0FE, 0x119, 0x136, 0x156, 0x178,
-        0x19D, 0x1C4, 0x1EF, 0x21D, 0x24F, 0x284, 0x2BD, 0x2FA, 0x33B,
-        0x381, 0x3CC, 0x41C, 0x472, 0x4CE, 0x530, 0x59A, 0x60C,
-        0x687, 0x70B, 0x79A, 0x835, 0x8DA, 0x98D, 0xA51, 0xB24,
-        0xC06, 0xCF9, 0xE00, 0xF15
+    static const uint16_t note_tp[] = {
+        /* 24  C1 */ 3522, 3325, 3138, 2962, 2796, 2639, 2491, 2351,
+        /* 32     */ 2219, 2095, 1977, 1866,
+        /* 36  C2 */ 1761, 1662, 1569, 1481, 1398, 1319, 1245, 1175,
+        /* 44     */ 1109, 1047,  989,  933,
+        /* 48  C3 */  881,  831,  784,  740,  699,  660,  623,  588,
+        /* 56     */  555,  524,  494,  467,
+        /* 60  C4 */  440,  416,  392,  370,  349,  330,  311,  294,
+        /* 68     */  277,  262,  247,  233,
+        /* 72  C5 */  220,  208,  196,  185,  175,  165,  156,  147,
+        /* 80     */  139,  131,  124,  117,
+        /* 84  C6 */  110,  104,   98,   93,   87,   82,   78,   73,
+        /* 92     */   69,   65,   62,   58,
+        /* 96  C7 */   55
     };
-    
-    if (note < sizeof(note_freq)) {
-        return note_freq[note];
-    }
-    return 0;
+
+    if (note < YM2149_MIDI_NOTE_MIN) note = YM2149_MIDI_NOTE_MIN;
+    if (note > YM2149_MIDI_NOTE_MAX) note = YM2149_MIDI_NOTE_MAX;
+
+    return note_tp[note - YM2149_MIDI_NOTE_MIN];
 }
 
 // Apply pitch bend to frequency
@@ -326,9 +339,9 @@ uint16_t ym2149_apply_pitch_bend(uint16_t base_freq, int16_t bend) {
     int16_t bend_amount = bend / 8;  // Simplified calculation
     
     if (bend_amount >= 0) {
-        return base_freq + (base_freq * bend_amount) / 100;
+        return base_freq + (uint16_t)((int32_t)base_freq * bend_amount / 100);
     } else {
-        return base_freq - (base_freq * (-bend_amount)) / 100;
+        return base_freq - (uint16_t)((int32_t)base_freq * (-bend_amount) / 100);
     }
 }
 
@@ -418,38 +431,34 @@ uint8_t detect_ym2149(void) {
 }
 
 // Simple delay function for test sequences
-static void delay_ms(uint16_t ms) {
-    // Simple delay loop - approximate timing
-    for (volatile uint16_t i = 0; i < ms * 100; i++) {
-        // Adjust multiplier based on actual clock speed
+void delay_ms(uint16_t ms) {
+    // Nested loops to avoid uint16_t overflow (ms * 100 overflows when ms > 655)
+    for (volatile uint16_t i = 0; i < ms; i++) {
+        for (volatile uint8_t j = 0; j < 100; j++) {
+            // Adjust iteration count based on actual clock speed
+        }
     }
 }
 
 // Play test sequence to verify audio output
 void ym2149_play_test_sequence(void) {
     printf("Playing YM2149 test sequence...\n");
-    
-    // Ensure chip is initialized
-    ym2149_init();
-    
+
     // Test 1: Simple tone on each channel
     printf("Testing individual channels...\n");
     
-    // Channel A - C4
-    ym2149_write_register(YM2149_FREQ_A_LSB, 0x1EF & 0xFF);
-    ym2149_write_register(YM2149_FREQ_A_MSB, 0x1EF >> 8 | 0x01);
+    // Channel A - C4 (MIDI 60)
+    ym2149_set_frequency(0, ym2149_note_to_freq(60));
     ym2149_set_volume(0, 10);  // Medium volume
     delay_ms(500);
-    
-    // Channel B - E4  
-    ym2149_write_register(YM2149_FREQ_B_LSB, 0x284 & 0xFF);
-    ym2149_write_register(YM2149_FREQ_B_MSB, 0x284 >> 8 | 0x01);
+
+    // Channel B - E4 (MIDI 64)
+    ym2149_set_frequency(1, ym2149_note_to_freq(64));
     ym2149_set_volume(1, 10);
     delay_ms(500);
-    
-    // Channel C - G4
-    ym2149_write_register(YM2149_FREQ_C_LSB, 0x31B & 0xFF);
-    ym2149_write_register(YM2149_FREQ_C_MSB, 0x31B >> 8 | 0x01);
+
+    // Channel C - G4 (MIDI 67)
+    ym2149_set_frequency(2, ym2149_note_to_freq(67));
     ym2149_set_volume(2, 10);
     delay_ms(500);
     
@@ -476,11 +485,12 @@ void ym2149_play_test_sequence(void) {
     // Test 4: Noise generator
     printf("Testing noise generator...\n");
     ym2149_write_register(YM2149_FREQ_NOISE, 0x1F);  // Middle noise frequency
-    ym2149_write_register(YM2149_MIXER, YM2149_MIX_NOISE_A | YM2149_MIX_NOISE_B | YM2149_MIX_NOISE_C);
+    // Enable noise on all channels, disable tone
+    ym2149_write_register(YM2149_MIXER, YM2149_MIX_TONE_A_OFF | YM2149_MIX_TONE_B_OFF | YM2149_MIX_TONE_C_OFF);
     delay_ms(1000);
-    
+
     // Clean up - restore tone mode
-    ym2149_write_register(YM2149_MIXER, YM2149_MIX_TONE_A | YM2149_MIX_TONE_B | YM2149_MIX_TONE_C);
+    ym2149_write_register(YM2149_MIXER, YM2149_MIX_ALL_TONE);
     ym2149_all_off();
     
     printf("Test sequence complete.\n");
@@ -489,43 +499,36 @@ void ym2149_play_test_sequence(void) {
 // Play musical scale
 void ym2149_play_scale(void) {
     printf("Playing C major scale...\n");
-    
-    // Ensure chip is initialized
-    ym2149_init();
-    
-    // C major scale frequencies (approximate)
-    uint16_t scale[] = {0x1EF, 0x219, 0x244, 0x26F, 0x29E, 0x2D0, 0x306, 0x33B};
-    uint8_t note_names[] = {67, 69, 71, 72, 74, 76, 77, 79}; // MIDI note numbers
-    
+
+    // C major scale: C4, D4, E4, F4, G4, A4, B4, C5
+    uint8_t scale_notes[] = {60, 62, 64, 65, 67, 69, 71, 72};
+
     for (uint8_t i = 0; i < 8; i++) {
         // Play note on channel A
-        ym2149_set_frequency(0, scale[i]);
+        ym2149_set_frequency(0, ym2149_note_to_freq(scale_notes[i]));
         ym2149_set_volume(0, 12);  // Good volume for testing
-        printf("Note: %d\n", note_names[i]);
+        printf("Note: %d\n", scale_notes[i]);
         delay_ms(400);
-        
+
         // Brief pause between notes
         ym2149_set_volume(0, 0);
         delay_ms(50);
     }
-    
+
     printf("Scale complete.\n");
 }
 
 // Play arpeggio test
 void ym2149_play_arpeggio(void) {
     printf("Playing arpeggio test...\n");
-    
-    // Ensure chip is initialized
-    ym2149_init();
-    
-    // C major arpeggio notes
-    uint16_t chord[] = {0x1EF, 0x244, 0x29E}; // C, E, G
-    
+
+    // C major arpeggio: C4, E4, G4
+    uint8_t chord_notes[] = {60, 64, 67};
+
     // Play each note on separate channel
-    for (uint8_t channel = 0; channel < 3; channel++) {
-        ym2149_set_frequency(channel, chord[channel]);
-        ym2149_set_volume(channel, 8);
+    for (uint8_t ch = 0; ch < 3; ch++) {
+        ym2149_set_frequency(ch, ym2149_note_to_freq(chord_notes[ch]));
+        ym2149_set_volume(ch, 8);
         delay_ms(100);
     }
     
@@ -570,5 +573,5 @@ sound_chip_interface_t ym2149_interface = {
     .set_preset = ym2149_set_preset,
     .panic = ym2149_panic,
     
-    .voices = (voice_t*)ym2149_voices
+    .voices = ym2149_voices
 };

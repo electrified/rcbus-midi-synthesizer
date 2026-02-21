@@ -32,15 +32,6 @@ uint8_t allocate_voice(uint8_t note, uint8_t velocity, uint8_t channel) {
     return oldest_voice;  // Steal oldest voice
 }
 
-void free_voice(uint8_t voice) {
-    if (!current_chip) return;
-    if (voice >= current_chip->voice_count) return;
-    
-    current_chip->voices[voice].active = 0;
-    current_chip->voices[voice].midi_note = 0;
-    current_chip->voices[voice].velocity = 0;
-}
-
 uint8_t find_voice_by_note(uint8_t note, uint8_t channel) {
     if (!current_chip) return 0xFF;
     
@@ -69,24 +60,6 @@ void synthesizer_init(void) {
     synthesizer_print_status();
     
     printf("Synthesizer ready. MIDI interface active.\n");
-}
-
-// Main processing loop
-void synthesizer_main_loop(void) {
-    while (1) {
-        // Process MIDI input
-        midi_driver_process_input();
-        
-        // Add other system tasks here
-        // - Voice cleanup for hung notes
-        // - LFO updates
-        // - Envelope processing
-        
-        // Simple delay to prevent busy-loop
-        for (volatile uint16_t i = 0; i < 1000; i++) {
-            // Small delay
-        }
-    }
 }
 
 // Emergency panic function

@@ -1,0 +1,22 @@
+# Compiled CP/M executables
+*.com
+*.COM
+
+# Object files
+*.o
+
+# Build artifacts
+*.bin
+*.lst
+*.ihx
+*.hex
+*.map
+
+# Disk images
+*.img
+
+# Test binaries (no extension, built from test_*.c)
+hw_test
+minimal_test
+tone_test
+test_simple

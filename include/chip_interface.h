@@ -51,12 +51,6 @@ typedef struct {
     voice_t* voices;          // Pointer to voice array
 } sound_chip_interface_t;
 
-// Chip management functions
-void chip_manager_init(void);
-sound_chip_interface_t* chip_manager_get_current(void);
-uint8_t chip_manager_set_chip(uint8_t chip_id);
-void chip_manager_detect_chips(void);
-
 // Global chip declarations
 extern sound_chip_interface_t* current_chip;
 

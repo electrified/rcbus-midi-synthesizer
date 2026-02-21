@@ -6,22 +6,13 @@
 #include "../include/port_config.h"
 #include <stdio.h>
 #include <stdlib.h>
-
-// External chip interface declarations
-extern sound_chip_interface_t ym2149_interface;
+#include <conio.h>
 
 // Function prototypes
 void print_help(void);
 void print_chip_status(void);
 void process_command(char cmd);
 void run_audio_test(void);
-
-// Simple delay function
-static void delay_ms(uint16_t ms) {
-    for (volatile uint16_t i = 0; i < ms * 100; i++) {
-        // Approximate delay - adjust based on CPU speed
-    }
-}
 
 // Main function
 int main(void) {
@@ -31,19 +22,19 @@ int main(void) {
     // Initialize synthesizer system
     synthesizer_init();
     
-    printf("\nEntering main loop. Type 'h' for help.\n");
-    printf("MIDI data will be processed automatically.\n\n");
+    printf("\nReady. Type 'h' for help.\n\n");
     
-    // Main interactive loop
-    char cmd = 0;
+    // Main loop: process MIDI and check for keyboard commands
     while (1) {
-        printf("Synth> ");
-        cmd = getchar();
-        
-        if (cmd != '\n') {
-            process_command(cmd);
-            // Clear input buffer
-            while (getchar() != '\n') {}
+        // Process any pending MIDI input
+        midi_driver_process_input();
+
+        // Check for keyboard command (non-blocking)
+        if (kbhit()) {
+            char cmd = getch();
+            if (cmd != '\n') {
+                process_command(cmd);
+            }
         }
     }
 }
@@ -111,10 +102,6 @@ void process_command(char cmd) {
             exit(0);
             break;
             
-        case '\n':
-            // Empty command, do nothing
-            break;
-            
         default:
             printf("Unknown command: '%c'. Type 'h' for help.\n", cmd);
             break;
@@ -167,26 +154,18 @@ void run_audio_test(void) {
     printf("You should hear audio tones if your hardware is working.\n");
     printf("Press Ctrl+C to interrupt if needed.\n\n");
     
-    // Run the test sequence
+    // Run full test sequence
     ym2149_play_test_sequence();
-    
-    printf("Would you like to run additional tests? (y/n): ");
-    char response = getchar();
-    while (getchar() != '\n') {}  // Clear input buffer
-    
-    if (response == 'y' || response == 'Y') {
-        printf("\nRunning scale test...\n");
-        ym2149_play_scale();
-        
-        for (volatile uint8_t i = 0; i < 200; i++) {
-            for (volatile uint8_t j = 0; j < 200; j++) {
-                // Nested loops for delay
-            }
-        }
-        
-        printf("\nRunning arpeggio test...\n");
-        ym2149_play_arpeggio();
-    }
-    
+
+    delay_ms(500);
+
+    printf("\nRunning scale test...\n");
+    ym2149_play_scale();
+
+    delay_ms(500);
+
+    printf("\nRunning arpeggio test...\n");
+    ym2149_play_arpeggio();
+
     printf("\n=== Audio Test Complete ===\n");
 }
