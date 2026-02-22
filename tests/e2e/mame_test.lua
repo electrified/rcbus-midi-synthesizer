@@ -2,10 +2,10 @@
 --
 -- MAME Lua E2E test script for the RC2014 MIDI Synthesizer.
 --
--- Invoked by run_e2e.sh via MAME's -script flag:
+-- Invoked by run_e2e.sh via MAME's -autoboot_script flag (MAME 0.229+):
 --
 --   mame rc2014zedp -bus:5 cf -hard cheese.img -bus:12 ay_sound \
---        -nothrottle -script tests/e2e/mame_test.lua
+--        -nothrottle -autoboot_script tests/e2e/mame_test.lua
 --
 -- How it works:
 --   Frame counting drives a linear sequence of scripted keystrokes sent to
@@ -17,7 +17,7 @@
 --   All timing is in *emulated* frames (the RC2014 terminal runs at ~60 Hz
 --   in MAME).  With -nothrottle, wall-clock time is typically much shorter.
 --
--- Requirements: MAME 0.200+
+-- Requirements: MAME 0.229+ (tested with 0.264)
 
 -- ---------------------------------------------------------------------------
 -- Configuration
@@ -103,23 +103,25 @@ end
 -- MAME callbacks
 -- ---------------------------------------------------------------------------
 
-emu.register_start(function()
-    build_sequence()
+-- In MAME 0.264+ emu.register_start no longer fires after the script loads.
+-- Perform all initialisation at the top level instead.
+build_sequence()
 
-    -- Create results directory (MAME is invoked from the project root)
-    os.execute("mkdir -p " .. RESULTS_DIR)
-    os.execute("mkdir -p " .. RESULTS_DIR .. "/snapshots")
+-- Create results directory (MAME is invoked from the project root)
+os.execute("mkdir -p " .. RESULTS_DIR)
+os.execute("mkdir -p " .. RESULTS_DIR .. "/snapshots")
 
-    result_file = io.open(RESULT_FILE, "w")
-    if not result_file then
-        print("[e2e] WARNING: cannot write " .. RESULT_FILE)
-    end
+result_file = io.open(RESULT_FILE, "w")
+if not result_file then
+    print("[e2e] WARNING: cannot write " .. RESULT_FILE)
+end
 
-    log("test started — " .. #sequence .. " steps")
-    log(string.format("timing — boot:%d startup:%d cmd:%d audio:%d frames",
-        FRAMES_BOOT, FRAMES_STARTUP, FRAMES_CMD, FRAMES_AUDIO))
-end)
+log("test started — " .. #sequence .. " steps")
+log(string.format("timing — boot:%d startup:%d cmd:%d audio:%d frames",
+    FRAMES_BOOT, FRAMES_STARTUP, FRAMES_CMD, FRAMES_AUDIO))
 
+-- emu.register_frame_done still works in MAME 0.264 and fires after each
+-- rendered frame, giving us a reliable per-frame tick even in -video none mode.
 emu.register_frame_done(function()
     frame_count = frame_count + 1
 
@@ -156,8 +158,9 @@ emu.register_frame_done(function()
     step_index = step_index + 1
 end)
 
-emu.register_stop(function()
-    -- Guarantee the result file is closed even if MAME is killed externally.
+-- emu.add_machine_stop_notifier is the MAME 0.264+ replacement for
+-- emu.register_stop. Guarantee the result file is closed on any exit.
+local _stop_sub = emu.add_machine_stop_notifier(function()
     if result_file then
         if step_index > #sequence then
             result_file:write("RESULT: PASS\n")

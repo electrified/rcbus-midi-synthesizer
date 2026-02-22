@@ -14,7 +14,7 @@
 #      via MAME's -wavwrite flag and verified for non-silence.
 #
 # Requirements:
-#   mame         — MAME emulator with rc2014zedp driver (0.200+)
+#   mame         — MAME emulator with rc2014zedp driver (0.229+, tested with 0.264)
 #   docker       — for z88dk build container
 #   cpmcp/cpmls  — cpmtools package  (apt install cpmtools)
 #   sox          — optional, for audio silence detection (apt install sox)
@@ -39,7 +39,7 @@
 #   --no-build       Skip the Docker build step (reuse existing cheese.img)
 #   --headless       Force headless mode even when a display is available
 #   --timeout N      MAME watchdog timeout in seconds (default: 180)
-#   --mame PATH      Path to the MAME binary (default: mame, or $MAME env var)
+#   --mame PATH      Path to the MAME binary (default: mame or /usr/games/mame, or $MAME env var)
 #   -h, --help       Show this help and exit
 
 set -euo pipefail
@@ -54,7 +54,7 @@ RESULTS_DIR="$SCRIPT_DIR/results"
 # ---------------------------------------------------------------------------
 # Defaults (can be overridden by env vars or CLI flags)
 # ---------------------------------------------------------------------------
-MAME_CMD="${MAME:-mame}"
+MAME_CMD="${MAME:-$(command -v mame 2>/dev/null || command -v /usr/games/mame 2>/dev/null || echo mame)}"
 HD_IMAGE="${HD_IMAGE:-$PROJECT_DIR/cheese.img}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-180}"
 BUILD=true
@@ -167,9 +167,9 @@ MAME_ARGS=(
     -bus:12 ay_sound
     -nothrottle
     -skip_gameinfo
-    -snappath "$RESULTS_DIR/snapshots"
+    -snapshot_directory "$RESULTS_DIR/snapshots"
     -snapname "step_%04i"
-    -script   "$SCRIPT_DIR/mame_test.lua"
+    -autoboot_script "$SCRIPT_DIR/mame_test.lua"
 )
 
 AUDIO_FILE="$RESULTS_DIR/audio.wav"
