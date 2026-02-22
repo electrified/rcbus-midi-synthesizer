@@ -19,6 +19,9 @@
 #   cpmcp/cpmls  — cpmtools package  (apt install cpmtools)
 #   sox          — optional, for audio silence detection (apt install sox)
 #
+# One-time setup (RC2014 ROM + wbw_hd512 diskdef):
+#   ./tests/e2e/setup_e2e.sh
+#
 # Audio recording notes:
 #   MAME's -wavwrite taps the internal mixer independently of the speaker
 #   output device, so audio is captured even in headless mode.  In headless
