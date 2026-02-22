@@ -19,6 +19,8 @@ uint8_t allocate_voice(uint8_t note, uint8_t velocity, uint8_t channel) {
     }
     
     // No free voices, use voice stealing (oldest note)
+    if (current_chip->voice_count == 0) return 0xFF;
+
     uint8_t oldest_voice = 0;
     uint32_t oldest_time = current_chip->voices[0].start_time;
     

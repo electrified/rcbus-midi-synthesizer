@@ -1,239 +1,160 @@
 # RC2014 Multi-Chip MIDI Synthesizer
 
-A modular MIDI synthesizer for RC2014/Z80 systems, supporting YM2149 now and OPL3 in the future. Designed to run on CP/M with full real-time CC parameter control from MIDI keyboards.
+A modular MIDI synthesizer for RC2014/Z80 systems, currently supporting YM2149 PSG with OPL3 FM planned for the future. Runs on CP/M with real-time MIDI note and CC parameter control.
 
 ## Features
 
-- **Multi-Chip Architecture**: Modular design supporting YM2149 PSG now, OPL3 FM later
-- **MIDI CC Control**: Full support for 8 knobs + 4 sliders (CC#1-12)
-- **Real-time Parameter Control**: Volume, envelope, effects via MIDI Continuous Controllers
-- **Voice Allocation**: Intelligent voice management with voice stealing
-- **CP/M Compatible**: Compiled for z88dk CP/M environment
-- **Interactive Mode**: Command-line interface for chip selection and control
+- **YM2149 PSG synthesis**: 3-channel square wave with volume envelopes and noise
+- **MIDI input**: Note on/off, velocity, pitch bend, program change, running status
+- **CC parameter control**: Volume, envelope (ADSR), vibrato, tremolo, modulation via CC#1-12
+- **Voice allocation**: 3-voice polyphony with oldest-note voice stealing
+- **Hardware detection**: Automatic YM2149 detection via register read/write verification
+- **Audio test mode**: Built-in test sequences (tones, scale, arpeggio) - no MIDI keyboard required
+- **Configurable I/O ports**: Default 0xD8/0xD0, overridable via `ports.conf` or at runtime
 
 ## Hardware Requirements
 
-### Minimum System
-- RC2014 Z80-based computer
-- CP/M 2.2 or later
-- 64KB RAM minimum
-- Serial MIDI interface (RC2014 MIDI board)
-- YM2149 sound card (address 0x90/0x91)
-
-### Optional Hardware
-- OPL3 sound card (future support)
-- Rotary knob MIDI keyboard with CC output
+- RC2014 Z80-based computer (or compatible)
+- CP/M 2.2 or later, 64KB RAM
+- YM2149 / AY-3-8910 sound card (default I/O ports: 0xD8 register, 0xD0 data)
+- Serial MIDI interface (optional - the synth can be tested without one)
 
 ## Building
 
-### Prerequisites
-- z88dk development kit
-- Make utility
-- Linux/Unix development environment
-- Docker (optional, for containerized builds)
-
-### Build with Docker (Recommended)
-The easiest way to build is using the provided Docker script:
+### Docker Build (Recommended)
 
 ```bash
 ./build_docker.sh
 ```
 
-This script uses the simple `zcc +cpm -create-app` command to:
-- Compile all source files with proper z88dk flags
-- Automatically generate the CP/M `.com` executable
-- Create a CP/M disk image for RC2014 MAME emulation
-- Requires no local z88dk installation
+This compiles with `z88dk/z88dk:latest` via Docker and produces:
+- `midisynth.com` — CP/M executable
+- `midisynth` — CP/M floppy disk image (z80pack format)
 
-**Output files:**
-- `midisynth.com` - CP/M executable (for real hardware)
-- `midisynth` - CP/M disk image (for MAME RC2014)
+If a `cheese.img` hard disk image is present in the project directory, the script also copies `midisynth.com` onto it using `cpmcp`. Override with environment variables:
 
-### Manual Build with z88dk
+```bash
+HD_IMAGE=/path/to/disk.img HD_DEST=0:synth.com ./build_docker.sh
+```
+
+### Local z88dk Build
+
 If you have z88dk installed locally:
 
 ```bash
 make all
+make clean   # remove build artifacts
 ```
 
-### Build Options
+## Running
+
+### MAME Emulation (RC2014 + CF card + AY sound)
+
 ```bash
-make debug      # Debug build
-make release    # Optimized release build  
-make clean      # Clean build files
-make test       # Build and test
+mame rc2014zedp -bus:5 cf -hard cheese.img -bus:12 ay_sound -window
 ```
 
-### Docker Build Requirements
-- Docker installed and running
-- The `z88dk/z88dk:latest` image will be pulled automatically
-- No local z88dk installation needed
+Then at the CP/M prompt:
 
-## Installation
+```
+A>midisyn
+```
 
-### For Real CP/M Hardware
-1. Compile the synthesizer:
-   - With Docker: `./build_docker.sh`
-   - Without Docker: `make all`
-2. Copy `midisynth.com` to your CP/M system disk
-3. Run from CP/M: `A>midisynth`
+### Real Hardware
 
-### For MAME RC2014 Emulation
-1. Build the project: `./build_docker.sh`
-2. Launch MAME with the generated disk image:
-   ```bash
-   mame rc2014 -flop1 midisynth
-   ```
-3. In CP/M: `A>midisynth`
+Copy `MIDISYNTH.COM` to your CP/M system disk (it will appear as `midisyn.com` due to CP/M's 8.3 filename limit).
 
-### Testing Without MIDI Hardware
-Even without a MIDI keyboard, you can test the synthesizer:
+## Interactive Commands
 
-1. Run the program: `A>midisynth`
-2. Select YM2149 chip: `1`
-3. Check status: `s` (should show YM2149 detected)
-4. Run audio test: `t`
-5. Listen for tones through your audio output
-
-The test will play:
-- Individual channel tests (C, E, G)
-- All channels together
-- Volume sweep up/down
-- Noise generator test
-- Musical scale and arpeggio (optional)
+| Key   | Action                              |
+|-------|-------------------------------------|
+| `h`   | Show help                           |
+| `s`   | Show system status (chip, voices)   |
+| `i`   | Show current I/O port addresses     |
+| `r`   | Reload port configuration from file |
+| `t`   | Run audio test sequence             |
+| `p`   | Panic — all notes off               |
+| `1`   | Select YM2149 chip                  |
+| `2`   | Select OPL3 chip (not implemented)  |
+| `q`   | Quit program                        |
 
 ## MIDI CC Mapping
 
-### Knobs (CC#1-8)
-- **CC#1-4**: Volume controls (per voice or global)
-- **CC#5**: Attack time
-- **CC#6**: Decay time
-- **CC#7**: Sustain level
-- **CC#8**: Release time
+| CC     | Function         | Notes                          |
+|--------|------------------|--------------------------------|
+| CC#1-4 | Volume           | Applied to first active voice  |
+| CC#5   | Attack time      | Envelope frequency             |
+| CC#6   | Decay time       | Envelope shape                 |
+| CC#7   | Sustain level    | Maps to volume 0-15            |
+| CC#8   | Release time     | Envelope frequency             |
+| CC#9   | Vibrato depth    | Not yet implemented in hardware|
+| CC#10  | Tremolo rate     | Not yet implemented in hardware|
+| CC#11  | Pitch bend (CC)  | Secondary to MIDI pitch bend   |
+| CC#12  | Modulation depth | Not yet implemented in hardware|
 
-### Sliders (CC#9-12)
-- **CC#9**: Vibrato depth
-- **CC#10**: Tremolo rate
-- **CC#11**: Pitch bend
-- **CC#12**: Modulation depth
+Standard MIDI pitch bend messages are also supported (14-bit resolution).
 
-## Usage
+## Note Range
 
-### Interactive Commands
-- `h` - Show help
-- `s` - Show system status
-- `t` - Test audio output (YM2149 only)
-- `p` - Panic (all notes off)
-- `1` - Select YM2149 chip
-- `2` - Select OPL3 chip (future)
-- `q` - Quit program
+MIDI notes 24 (C1) through 96 (C7) are supported. Notes outside this range are clamped to the nearest valid value. The frequency table is calculated for a 1.8432 MHz clock.
 
-### MIDI Operation
-1. Connect MIDI keyboard to RC2014 MIDI interface
-2. Run synthesizer: `A>midisynth`
-3. Play notes on keyboard - they should sound immediately
-4. Adjust knobs/sliders - parameters change in real-time
+## Port Configuration
 
-## Architecture
+Default I/O ports (R5 RC2014 YM2149 board):
+- Register port: `0xD8`
+- Data port: `0xD0`
 
-### Modular Design
+To override, create a `ports.conf` file:
+
 ```
-┌─────────────┐    ┌──────────────────┐    ┌─────────────┐
-│  MIDI       │    │  Abstract       │    │  Chip       │
-│  Keyboard   ├───▶│  Sound Chip    ├───▶│  Manager    │
-│  (CC + Notes)│    │  Interface     │    │  (Selection)│
-└─────────────┘    └──────────────────┘    └─────────────┘
+addr_port=0xD8
+data_port=0xD0
 ```
 
-### Hardware Detection
-- **YM2149 PSG**: Automatic detection via register read/write testing
-- **OPL3 FM**: Future support with hardware detection
-- **Status Command**: Press 's' to see detected hardware status
-- **Robust Testing**: Multiple register verification with state preservation
+Or press `r` at runtime to reload from file, and `i` to display the current ports.
 
-### Audio Testing
-- **Test Command**: Press 't' to run audio test sequence
-- **No MIDI Required**: Works without MIDI keyboard connected
-- **Multi-Test**: Individual channels, volume sweep, noise generator
-- **Musical Tests**: Scale and arpeggio demonstrations
-- **Diagnostic**: Verifies audio hardware is working properly
+## Minimal Hardware Test
 
-### File Structure
-- `src/chips/` - Sound chip drivers (YM2149, OPL3)
-- `src/midi/` - MIDI interface and parser
-- `src/core/` - Voice allocation, chip management
-- `include/` - Header files
-- `Makefile` - z88dk build system
-- `build_docker.sh` - Docker build script (creates .com + disk image)
+A standalone test program (`test_minimal.c`) is included for verifying basic YM2149 I/O independently of the full synthesizer. It sweeps channel A pitch in a loop — if you hear descending tones, the chip and I/O ports are working.
 
-## Supported Sound Chips
+```bash
+./build_docker.sh test
+```
 
-### YM2149 (Current)
-- 3-channel PSG synthesis
-- Volume, envelope, noise generation
-- Compatible with existing RC2014 YM2149 boards
+Then run `A>mt` at the CP/M prompt.
 
-### OPL3 (Future)
-- 18-channel FM synthesis
-- 4-operator modes
-- Stereo output
-- Backward compatible with OPL2
+## Project Structure
 
-## Development
-
-### Adding New Chips
-1. Implement chip interface in `src/chips/`
-2. Add to chip manager detection
-3. Update voice allocation logic
-4. Test with existing MIDI CC mapping
-
-### Extending MIDI CC
-1. Update `midi_driver.h` control definitions
-2. Add handling in `midi_driver.c`
-3. Map to chip-specific parameters
-
-## Troubleshooting
-
-### No Sound
-- Check YM2149 board connections
-- Verify I/O address (default 0x90/0x91)
-- Check MIDI interface connection
-
-### MIDI Not Responding
-- Verify MIDI keyboard is sending CC messages
-- Check RC2014 MIDI board configuration
-- Test MIDI interface with other software
-
-### Build Errors
-- Ensure z88dk is properly installed (or use Docker build)
-- Check C library compatibility (sdcc_iy)
-- Verify include paths
-- Docker issues: Ensure Docker is running and can pull images
-
-### MAME RC2014 Issues
-- Ensure MAME recognizes RC2014 system: `mame -listsystems | grep rc2014`
-- Check that the disk image loads properly: look for disk activity in MAME
-- Verify CP/M boots: should see `A>` prompt
-- Program not found: ensure `midisynth.com` is properly placed on the disk image
+```
+src/
+  main.c              — Main loop, command handler, audio test
+  core/
+    synthesizer.c     — Voice allocation, system init, panic
+    chip_manager.c    — Chip detection and selection
+  midi/
+    midi_driver.c     — MIDI byte parser, message dispatch, CC routing
+  chips/
+    ym2149.c          — YM2149 driver, register I/O, frequency table
+include/
+  chip_interface.h    — Abstract sound chip interface (voice_t, function pointers)
+  synthesizer.h       — Synthesizer API
+  chip_manager.h      — Chip manager API
+  midi_driver.h       — MIDI driver API and state structs
+  ym2149.h            — YM2149 registers, voice extras, frequency defines
+  port_config.h       — I/O port configuration
+test_minimal.c        — Standalone YM2149 I/O test
+build_docker.sh       — Docker-based build script (synth, test, or all)
+Makefile              — Local z88dk build
+```
 
 ## Future Development
 
-- [ ] OPL3 driver implementation
-- [ ] 4-operator FM synthesis modes
-- [ ] Stereo output support
-- [ ] Advanced envelope generators
-- [ ] Preset system with load/save
-- [ ] Real-time parameter interpolation
-- [ ] Voice priority system
+- OPL3 FM driver (18-channel, 4-operator)
+- Stereo output support
+- Preset system with load/save
+- Software vibrato/tremolo via frequency and volume modulation
+- MIDI clock sync
 
 ## License
 
-MIT License - feel free to use, modify, and distribute.
-
-## Contributing
-
-Contributions welcome! Please fork and submit pull requests for:
-- New chip drivers
-- MIDI feature enhancements
-- Bug fixes and optimizations
-- Documentation improvements
+MIT License

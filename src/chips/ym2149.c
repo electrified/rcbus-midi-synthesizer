@@ -149,7 +149,7 @@ void ym2149_note_on(uint8_t voice, uint8_t note, uint8_t velocity, uint8_t chann
     ym2149_set_frequency(voice, vx->frequency);
 
     // Set volume based on velocity (0-127 → 0-15)
-    vx->volume = (velocity * 15) / 127;
+    vx->volume = ((uint16_t)velocity * 15) / 127;
     ym2149_set_volume(voice, vx->volume);
 }
 
@@ -189,7 +189,7 @@ void ym2149_set_attack(uint8_t voice, uint8_t attack) {
     ym2149_voice_extra_t* vx = &ym2149_voice_extra[voice];
 
     // Map CC value (0-127) to envelope frequency
-    uint16_t env_freq = (attack * 255) / 127;
+    uint16_t env_freq = ((uint16_t)attack * 255) / 127;
 
     // Set envelope frequency registers
     ym2149_write_register(YM2149_FREQ_ENV_LSB, env_freq & 0xFF);
@@ -220,7 +220,7 @@ void ym2149_set_sustain(uint8_t voice, uint8_t sustain) {
     if (voice >= 3) return;
     
     // Map sustain to volume level (0-127 → 0-15)
-    uint8_t vol = (sustain * 15) / 127;
+    uint8_t vol = ((uint16_t)sustain * 15) / 127;
     ym2149_set_volume(voice, vol);
 }
 
@@ -229,7 +229,7 @@ void ym2149_set_release(uint8_t voice, uint8_t release) {
     if (voice >= 3) return;
     
     // Map release to envelope decay rate
-    uint16_t env_freq = (release * 255) / 127;
+    uint16_t env_freq = ((uint16_t)release * 255) / 127;
     ym2149_write_register(YM2149_FREQ_ENV_LSB, env_freq & 0xFF);
     ym2149_write_register(YM2149_FREQ_ENV_MSB, (env_freq >> 8) & 0xFF);
 }
@@ -334,15 +334,14 @@ uint16_t ym2149_note_to_freq(uint8_t note) {
 
 // Apply pitch bend to frequency
 uint16_t ym2149_apply_pitch_bend(uint16_t base_freq, int16_t bend) {
-    // Simple linear pitch bend (can be improved)
+    // Simple linear pitch bend
     // bend range: -8192 to +8192, map to -semitone to +semitone
     int16_t bend_amount = bend / 8;  // Simplified calculation
-    
-    if (bend_amount >= 0) {
-        return base_freq + (uint16_t)((int32_t)base_freq * bend_amount / 100);
-    } else {
-        return base_freq - (uint16_t)((int32_t)base_freq * (-bend_amount) / 100);
-    }
+    int32_t result = (int32_t)base_freq + ((int32_t)base_freq * bend_amount / 100);
+
+    if (result < 1) result = 1;          // Clamp to minimum valid period
+    if (result > 4095) result = 4095;    // Clamp to 12-bit max
+    return (uint16_t)result;
 }
 
 // Read from YM2149 register (for detection)

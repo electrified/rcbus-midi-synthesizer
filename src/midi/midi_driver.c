@@ -129,9 +129,11 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
             if (current_chip && current_chip->note_on) {
                 if (data2 == 0) {
                     // Note-on with velocity 0 is equivalent to note-off
-                    uint8_t voice = find_voice_by_note(data1, channel);
-                    if (voice != 0xFF) {
-                        current_chip->note_off(voice);
+                    if (current_chip->note_off) {
+                        uint8_t voice = find_voice_by_note(data1, channel);
+                        if (voice != 0xFF) {
+                            current_chip->note_off(voice);
+                        }
                     }
                 } else {
                     uint8_t voice = allocate_voice(data1, data2, channel);
@@ -168,7 +170,7 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                             // Map to first active voice or global
                             for (uint8_t i = 0; i < current_chip->voice_count; i++) {
                                 if (current_chip->voices[i].active) {
-                                    current_chip->set_volume(i, data2 * 15 / 127);
+                                    current_chip->set_volume(i, (uint16_t)data2 * 15 / 127);
                                     break;
                                 }
                             }
