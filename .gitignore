@@ -25,4 +25,5 @@ test_simple
 tests/e2e/results/*.img
 tests/e2e/results/*.log
 tests/e2e/results/*.txt
+tests/e2e/results/*.wav
 tests/e2e/results/snapshots/*.png

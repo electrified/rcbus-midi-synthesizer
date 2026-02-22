@@ -10,14 +10,24 @@
 #   4. The Lua script types scripted commands at the emulated CP/M prompt
 #      and collects results in tests/e2e/results/test_result.txt.
 #   5. This script reads that file and exits 0 (pass) or 1 (fail).
+#   6. Audio from the YM2149 emulation is recorded to results/audio.wav
+#      via MAME's -wavwrite flag and verified for non-silence.
 #
 # Requirements:
 #   mame         — MAME emulator with rc2014zedp driver (0.200+)
 #   docker       — for z88dk build container
 #   cpmcp/cpmls  — cpmtools package  (apt install cpmtools)
+#   sox          — optional, for audio silence detection (apt install sox)
+#
+# Audio recording notes:
+#   MAME's -wavwrite taps the internal mixer independently of the speaker
+#   output device, so audio is captured even in headless mode.  In headless
+#   mode the script sets SDL_AUDIODRIVER=dummy so the SDL sound backend can
+#   initialise (and therefore process audio) without a real sound card.
+#   The recorded WAV is kept in results/ as a CI artefact for manual review.
 #
 # Headless (CI) notes:
-#   - If no DISPLAY/WAYLAND_DISPLAY is set the script adds -video none -sound none.
+#   - If no DISPLAY/WAYLAND_DISPLAY is set the script enables headless mode.
 #   - -video none requires MAME 0.229+.  On older MAME, wrap with Xvfb.
 #   - With -video none, MAME snapshots are skipped automatically (the Lua
 #     script handles this gracefully).
@@ -162,13 +172,25 @@ MAME_ARGS=(
     -script   "$SCRIPT_DIR/mame_test.lua"
 )
 
+AUDIO_FILE="$RESULTS_DIR/audio.wav"
+rm -f "$AUDIO_FILE"
+
+# Always record audio via MAME's internal mixer tap — this is independent of
+# the speaker output device, so it works even when speakers are disabled.
+MAME_ARGS+=(-wavwrite "$AUDIO_FILE")
+
 if [[ "$HEADLESS" == true ]]; then
-    # -video none is available in MAME 0.229+; older installs need Xvfb.
-    MAME_ARGS+=(-video none -sound none)
-    info "Video/audio : disabled (headless)"
+    # SDL_AUDIODRIVER=dummy lets SDL initialise its audio backend (required for
+    # MAME's mixer to run and populate the WAV file) without a real sound card.
+    export SDL_AUDIODRIVER=dummy
+    # -video none requires MAME 0.229+; older installs need Xvfb.
+    MAME_ARGS+=(-video none -sound sdl)
+    info "Video       : none (headless, MAME 0.229+)"
+    info "Audio       : SDL dummy driver → $AUDIO_FILE"
 else
-    MAME_ARGS+=(-window -nomaximize -sound none)
-    info "Video       : window (audio disabled for CI consistency)"
+    MAME_ARGS+=(-window -nomaximize -sound sdl)
+    info "Video       : window"
+    info "Audio       : SDL → speakers + $AUDIO_FILE"
 fi
 
 LOG_FILE="$RESULTS_DIR/mame.log"
@@ -194,7 +216,47 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 5: Evaluate results
+# Step 5: Verify audio recording
+# ---------------------------------------------------------------------------
+info "Checking audio recording..."
+
+# WAV header alone is 44 bytes; anything beyond that is actual sample data.
+# We expect at least a few seconds of audio from the test sequence.
+AUDIO_MIN_BYTES=88200   # ~0.5 s at 44100 Hz / 16-bit / stereo
+
+if [[ ! -f "$AUDIO_FILE" ]]; then
+    info "WARNING: No WAV file found at $AUDIO_FILE"
+    info "         MAME may not support -wavwrite with this configuration."
+else
+    AUDIO_BYTES=$(wc -c < "$AUDIO_FILE")
+    if [[ "$AUDIO_BYTES" -lt "$AUDIO_MIN_BYTES" ]]; then
+        info "WARNING: WAV file is very small (${AUDIO_BYTES} bytes < ${AUDIO_MIN_BYTES} expected)"
+        info "         Audio processing may not have run.  Try without SDL_AUDIODRIVER=dummy."
+    else
+        info "WAV file: $AUDIO_FILE (${AUDIO_BYTES} bytes)"
+
+        # Use sox to check for non-silence if it is available.
+        if command -v sox &>/dev/null; then
+            # 'sox ... -n stat' writes stats to stderr; the Maximum amplitude
+            # line is 0.000000 for a file that contains only silence.
+            MAX_AMP=$(sox "$AUDIO_FILE" -n stat 2>&1 \
+                      | awk -F: '/Maximum amplitude/ { gsub(/ /,"",$2); print $2 }')
+            if awk "BEGIN { exit !($MAX_AMP > 0.001) }" 2>/dev/null; then
+                pass "Audio non-silent (peak amplitude ${MAX_AMP})"
+            else
+                info "WARNING: Audio appears silent (peak amplitude ${MAX_AMP})"
+                info "         YM2149 chip detection may have failed in MAME — check the log."
+            fi
+        else
+            pass "WAV recorded: ${AUDIO_BYTES} bytes (install sox for silence check)"
+        fi
+    fi
+fi
+
+echo ""
+
+# ---------------------------------------------------------------------------
+# Step 6: Evaluate test results
 # ---------------------------------------------------------------------------
 info "Evaluating results..."
 
@@ -227,6 +289,7 @@ else
 fi
 
 echo ""
+info "Audio     : $AUDIO_FILE"
 info "Snapshots : $RESULTS_DIR/snapshots/"
 info "MAME log  : $LOG_FILE"
 echo "==================================="
