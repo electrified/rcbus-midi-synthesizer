@@ -117,6 +117,25 @@ warn() { echo "[$(_ts)] WARN  $*"; }
 fail() { echo "[$(_ts)] FAIL  $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
+# Cleanup trap — ensure MAME and child processes are killed on exit/signal
+# ---------------------------------------------------------------------------
+MAME_PID=""
+cleanup() {
+    local exit_code=$?
+    set +e
+    if [[ -n "$MAME_PID" ]] && kill -0 "$MAME_PID" 2>/dev/null; then
+        warn "Cleaning up MAME (PID $MAME_PID)…"
+        kill "$MAME_PID" 2>/dev/null
+        sleep 1
+        kill -0 "$MAME_PID" 2>/dev/null && kill -9 "$MAME_PID" 2>/dev/null
+    fi
+    # Remove stale done flag
+    rm -f "$RESULTS_DIR/mame_done.flag" 2>/dev/null
+    exit "$exit_code"
+}
+trap cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
 echo "=== RC2014 MIDI Synthesizer — MAME E2E Test (null-modem) ==="
 info "Project dir : $PROJECT_DIR"
 info "Disk image  : $HD_IMAGE"
@@ -264,11 +283,14 @@ rm -f "$AUDIO_FILE"
 MAME_ARGS+=(-wavwrite "$AUDIO_FILE")
 
 if [[ "$HEADLESS" == true ]]; then
+    export SDL_VIDEODRIVER=dummy
     export SDL_AUDIODRIVER=dummy
     # With null-modem the emulated system has no screen, so -video none is fine.
-    MAME_ARGS+=(-video none -sound sdl)
-    info "Video       : none (headless)"
-    info "Audio       : SDL dummy → $AUDIO_FILE"
+    # Use -sound none to avoid SDL audio init issues in headless environments.
+    # The -wavwrite flag still records audio regardless of -sound setting.
+    MAME_ARGS+=(-video none -sound none)
+    info "Video       : none (headless, SDL_VIDEODRIVER=dummy)"
+    info "Audio       : none (headless, SDL_AUDIODRIVER=dummy) → $AUDIO_FILE via -wavwrite"
 else
     # Even in windowed mode MAME will show "No screens attached" — that is
     # expected when null-modem replaces the built-in terminal.
@@ -292,6 +314,17 @@ cd "$PROJECT_DIR"
 timeout "$TEST_TIMEOUT" "$MAME_CMD" "${MAME_ARGS[@]}" >"$LOG_FILE" 2>&1 &
 MAME_PID=$!
 info "MAME PID: $MAME_PID"
+
+# Give MAME a moment to start, then check it didn't crash immediately
+sleep 2
+if ! kill -0 "$MAME_PID" 2>/dev/null; then
+    echo ""
+    info "MAME exited immediately — likely a configuration or ROM error."
+    info "MAME log:"
+    cat "$LOG_FILE" | sed 's/^/  /'
+    fail "MAME failed to start (exited within 2s)"
+fi
+info "MAME running"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -305,6 +338,7 @@ set +e
 SERIAL_HOST=localhost \
 SERIAL_PORT="$SERIAL_PORT" \
 RESULTS_DIR="$RESULTS_DIR" \
+MAME_PID="$MAME_PID" \
 CONNECT_TIMEOUT=60 \
 BOOT_TIMEOUT=120 \
 CMD_TIMEOUT=30 \
@@ -322,23 +356,36 @@ echo ""
 # null_modem_terminal.py writes the done flag, which mame_test.lua picks up
 # and calls manager.machine:exit().  Give MAME a few seconds to exit cleanly.
 info "Waiting for MAME to exit (PID $MAME_PID)…"
-for _i in $(seq 1 15); do
+MAME_EXITED=false
+for _i in $(seq 1 20); do
     if ! kill -0 "$MAME_PID" 2>/dev/null; then
+        MAME_EXITED=true
+        info "MAME exited cleanly"
         break
     fi
     sleep 1
 done
 
-# If MAME is still running, kill it
-if kill -0 "$MAME_PID" 2>/dev/null; then
-    warn "MAME did not exit within 15s — sending SIGTERM"
+# If MAME is still running, send SIGTERM then SIGKILL
+if [[ "$MAME_EXITED" == false ]]; then
+    warn "MAME did not exit within 20s — sending SIGTERM"
     kill "$MAME_PID" 2>/dev/null || true
-    sleep 2
-    kill -0 "$MAME_PID" 2>/dev/null && kill -9 "$MAME_PID" 2>/dev/null || true
+    for _i in $(seq 1 5); do
+        if ! kill -0 "$MAME_PID" 2>/dev/null; then
+            MAME_EXITED=true
+            break
+        fi
+        sleep 1
+    done
+fi
+if [[ "$MAME_EXITED" == false ]] && kill -0 "$MAME_PID" 2>/dev/null; then
+    warn "MAME did not respond to SIGTERM — sending SIGKILL"
+    kill -9 "$MAME_PID" 2>/dev/null || true
 fi
 
 # Collect MAME exit status (ignore if already gone)
 wait "$MAME_PID" 2>/dev/null || true
+MAME_PID=""  # Prevent cleanup trap from trying again
 echo ""
 
 # ---------------------------------------------------------------------------
