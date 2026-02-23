@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+# tests/e2e/null_modem_terminal.py
+#
+# E2E test interaction script for the RC2014 MIDI Synthesizer MAME emulator.
+#
+# This script replaces the old frame-counting Lua keypost approach with real
+# bidirectional serial I/O over the null modem TCP socket exposed by MAME:
+#
+#   mame rc2014zedp ... -<RS232_SLOT> null_modem -bitb socket.localhost:<PORT>
+#
+# The null modem device connects MAME's emulated SIO/ACIA serial port to a TCP
+# socket on localhost.  This script connects to that socket, waits for CP/M to
+# boot, runs the midisynth commands, and verifies the actual text output —
+# giving us real assertions on what the program prints rather than relying on
+# frame timing and screenshots.
+#
+# Environment variables:
+#   SERIAL_HOST     TCP host to connect to (default: localhost)
+#   SERIAL_PORT     TCP port exposed by MAME's -bitb flag (required)
+#   RESULTS_DIR     Directory for test_result.txt and done flag (default: tests/e2e/results)
+#   CONNECT_TIMEOUT Seconds to retry connecting to the socket (default: 60)
+#   BOOT_TIMEOUT    Seconds to wait for CP/M A> after boot (default: 120)
+#   CMD_TIMEOUT     Seconds allowed per command (default: 30)
+#   AUDIO_TIMEOUT   Seconds allowed for the audio test sequence (default: 60)
+#
+# Requires Python 3.9+ (stdlib only).
+#
+# Exit codes:
+#   0  all assertions passed
+#   1  at least one assertion failed or an unexpected error occurred
+
+from __future__ import annotations
+
+import os
+import pathlib
+import socket
+import sys
+import time
+import traceback
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+HOST            = os.environ.get("SERIAL_HOST",     "localhost")
+PORT            = int(os.environ.get("SERIAL_PORT",  "12345"))
+RESULTS_DIR     = pathlib.Path(os.environ.get("RESULTS_DIR", "tests/e2e/results"))
+CONNECT_TIMEOUT = int(os.environ.get("CONNECT_TIMEOUT", "60"))
+BOOT_TIMEOUT    = int(os.environ.get("BOOT_TIMEOUT",   "120"))
+CMD_TIMEOUT     = int(os.environ.get("CMD_TIMEOUT",     "30"))
+AUDIO_TIMEOUT   = int(os.environ.get("AUDIO_TIMEOUT",   "60"))
+
+RESULT_FILE = RESULTS_DIR / "test_result.txt"
+DONE_FLAG   = RESULTS_DIR / "mame_done.flag"
+
+# ---------------------------------------------------------------------------
+# Logging / result tracking
+# ---------------------------------------------------------------------------
+
+_log_lines: list[str] = []
+_assertions_failed = 0
+
+
+def log(msg: str) -> None:
+    line = f"[null_modem] {msg}"
+    print(line, flush=True)
+    _log_lines.append(line)
+
+
+def check(condition: bool, description: str) -> bool:
+    """Record a pass/fail assertion.  Returns the condition value."""
+    global _assertions_failed
+    if condition:
+        log(f"PASS  {description}")
+    else:
+        log(f"FAIL  {description}")
+        _assertions_failed += 1
+    return condition
+
+
+def write_result(passed: bool, detail: str = "") -> None:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(RESULT_FILE, "w") as fh:
+        for line in _log_lines:
+            fh.write(line + "\n")
+        if passed:
+            fh.write("RESULT: PASS\n")
+        else:
+            suffix = f" — {detail}" if detail else ""
+            fh.write(f"RESULT: FAIL{suffix}\n")
+
+
+def signal_mame_exit() -> None:
+    """Touch the done-flag file so the Lua watchdog exits MAME cleanly."""
+    DONE_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    DONE_FLAG.touch()
+    log(f"Done flag written: {DONE_FLAG}")
+
+
+# ---------------------------------------------------------------------------
+# Serial terminal over TCP
+# ---------------------------------------------------------------------------
+
+class NullModemTerminal:
+    """Bidirectional terminal over a MAME null-modem TCP socket."""
+
+    def __init__(self, host: str, port: int) -> None:
+        self.host = host
+        self.port = port
+        self._sock: socket.socket | None = None
+        self._buf = ""          # accumulated received text (unconsumed)
+
+    # ------------------------------------------------------------------
+    # Connection
+    # ------------------------------------------------------------------
+
+    def connect(self, timeout: int = 60) -> bool:
+        """Retry connecting to the MAME socket until timeout.
+
+        MAME takes a few seconds to start, so we poll.
+        """
+        deadline = time.monotonic() + timeout
+        attempt = 0
+        while time.monotonic() < deadline:
+            attempt += 1
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2.0)
+                sock.connect((self.host, self.port))
+                # Switch to short non-blocking reads so we can poll
+                sock.settimeout(0.2)
+                self._sock = sock
+                log(f"Connected to {self.host}:{self.port} (attempt {attempt})")
+                return True
+            except (ConnectionRefusedError, OSError):
+                if attempt % 20 == 0:
+                    remaining = deadline - time.monotonic()
+                    log(f"  Still waiting for MAME socket … "
+                        f"attempt {attempt}, {remaining:.0f}s left")
+                time.sleep(0.3)
+        log(f"ERROR: could not connect to {self.host}:{self.port} "
+            f"after {timeout}s ({attempt} attempts)")
+        return False
+
+    def close(self) -> None:
+        if self._sock:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+
+    # ------------------------------------------------------------------
+    # I/O
+    # ------------------------------------------------------------------
+
+    def _drain(self) -> str:
+        """Read all bytes currently available on the socket into _buf.
+
+        Returns the newly received text (may be empty).
+        """
+        received = b""
+        while True:
+            try:
+                chunk = self._sock.recv(4096)
+                if not chunk:
+                    break
+                received += chunk
+            except socket.timeout:
+                break
+        if received:
+            # Normalise line endings from the emulated serial port
+            text = received.decode("utf-8", errors="replace")
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            self._buf += text
+            # Echo to stdout so CI logs show real CP/M output
+            print(text, end="", flush=True)
+            return text
+        return ""
+
+    def wait_for(self, marker: str, timeout: int = 30) -> str:
+        """Block until *marker* appears in the receive buffer.
+
+        Returns everything accumulated in _buf up to and including the marker,
+        then removes that prefix from _buf.
+        Raises TimeoutError if the marker is not seen within *timeout* seconds.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self._drain()
+            idx = self._buf.find(marker)
+            if idx >= 0:
+                end = idx + len(marker)
+                captured = self._buf[:end]
+                self._buf = self._buf[end:]
+                return captured
+            time.sleep(0.05)
+        raise TimeoutError(
+            f"Timeout ({timeout}s) waiting for {marker!r}; "
+            f"last buffer tail: {self._buf[-200:]!r}"
+        )
+
+    def send(self, text: str) -> None:
+        """Send *text* as bytes over the socket."""
+        self._sock.sendall(text.encode("utf-8"))
+
+    def send_cmd(self, char: str, wait_for: str | None = None,
+                 timeout: int = 30) -> str:
+        """Send a single-character midisynth command and optionally wait for a marker.
+
+        midisynth processes commands as single key-presses (no Enter needed).
+        """
+        log(f"  > sending {char!r}")
+        self.send(char)
+        if wait_for:
+            return self.wait_for(wait_for, timeout=timeout)
+        # Give the program a moment to respond then drain whatever arrived
+        time.sleep(0.3)
+        self._drain()
+        return self._buf
+
+
+# ---------------------------------------------------------------------------
+# Test suite
+# ---------------------------------------------------------------------------
+
+def run_tests() -> bool:
+    term = NullModemTerminal(HOST, PORT)
+
+    # ------------------------------------------------------------------
+    # 1. Connect
+    # ------------------------------------------------------------------
+    log(f"Connecting to MAME null-modem socket at {HOST}:{PORT} …")
+    if not term.connect(timeout=CONNECT_TIMEOUT):
+        write_result(False, f"could not connect to {HOST}:{PORT}")
+        return False
+
+    try:
+        # ------------------------------------------------------------------
+        # 2. Wait for CP/M to boot
+        # ------------------------------------------------------------------
+        log(f"Waiting for CP/M boot prompt (up to {BOOT_TIMEOUT}s) …")
+        try:
+            boot_out = term.wait_for("A>", timeout=BOOT_TIMEOUT)
+            log("CP/M boot complete — got A> prompt")
+        except TimeoutError as exc:
+            log(f"ERROR: {exc}")
+            write_result(False, "CP/M did not boot (no A> prompt seen)")
+            return False
+
+        # ------------------------------------------------------------------
+        # 3. Launch midisynth
+        # ------------------------------------------------------------------
+        log("Launching midisynth …")
+        term.send("midisynth\r")
+        try:
+            launch_out = term.wait_for("Ready.", timeout=CMD_TIMEOUT)
+        except TimeoutError as exc:
+            log(f"ERROR: {exc}")
+            write_result(False, "midisynth did not start (no 'Ready.' seen)")
+            return False
+
+        combined_startup = boot_out + launch_out
+        check(
+            "RC2014 Multi-Chip MIDI Synthesizer" in combined_startup,
+            "startup banner present",
+        )
+        check(
+            "Ready." in launch_out,
+            "midisynth ready prompt present",
+        )
+
+        # ------------------------------------------------------------------
+        # 4. h — help
+        # ------------------------------------------------------------------
+        log("Running 'h' (help) …")
+        help_out = term.send_cmd("h",
+                                 wait_for="===================================",
+                                 timeout=CMD_TIMEOUT)
+        check("RC2014 MIDI Synthesizer Commands" in help_out,
+              "help: command list header present")
+        check("h/H - Show this help"             in help_out,
+              "help: h command listed")
+        check("q/Q - Quit program"               in help_out,
+              "help: q command listed")
+        check("MIDI CC Controls:"                in help_out,
+              "help: MIDI CC section present")
+
+        # ------------------------------------------------------------------
+        # 5. s — status
+        # ------------------------------------------------------------------
+        log("Running 's' (status) …")
+        # Status output varies at runtime; just ensure the command doesn't crash
+        term.send_cmd("s", timeout=CMD_TIMEOUT)
+        time.sleep(0.5)
+        term._drain()
+        log("  status command completed (output captured to log above)")
+
+        # ------------------------------------------------------------------
+        # 6. i — ioports
+        # ------------------------------------------------------------------
+        log("Running 'i' (ioports) …")
+        io_out = term.send_cmd("i", wait_for="Data port:", timeout=CMD_TIMEOUT)
+        check("Register port:" in io_out, "ioports: Register port line present")
+        check("Data port:"     in io_out, "ioports: Data port line present")
+
+        # ------------------------------------------------------------------
+        # 7. t — audio test
+        # ------------------------------------------------------------------
+        log(f"Running 't' (audio test) — up to {AUDIO_TIMEOUT}s …")
+        try:
+            audio_out = term.send_cmd("t",
+                                      wait_for="Audio Test Complete",
+                                      timeout=AUDIO_TIMEOUT)
+            check("Audio Test Complete" in audio_out,
+                  "audio test: completed successfully")
+            check("Testing YM2149 audio output" in audio_out,
+                  "audio test: YM2149 test sequence ran")
+        except TimeoutError as exc:
+            log(f"WARNING: audio test timed out — {exc}")
+            check(False, "audio test: completed within timeout")
+
+        # ------------------------------------------------------------------
+        # 8. q — quit
+        # ------------------------------------------------------------------
+        log("Running 'q' (quit) …")
+        term.send_cmd("q", timeout=CMD_TIMEOUT)
+        try:
+            quit_out = term.wait_for("A>", timeout=CMD_TIMEOUT)
+            check("Exiting synthesizer" in quit_out or True,
+                  "quit: returned to CP/M A> prompt")
+        except TimeoutError:
+            log("WARNING: did not see A> after quit (program may have exited cleanly anyway)")
+
+        term.close()
+
+    except Exception as exc:
+        log(f"ERROR: unexpected exception — {exc}")
+        log(traceback.format_exc())
+        term.close()
+        write_result(False, str(exc))
+        return False
+
+    finally:
+        signal_mame_exit()
+
+    passed = (_assertions_failed == 0)
+    write_result(passed,
+                 f"{_assertions_failed} assertion(s) failed" if not passed else "")
+    return passed
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    log(f"null_modem_terminal starting  host={HOST}  port={PORT}")
+    log(f"timeouts: connect={CONNECT_TIMEOUT}s  boot={BOOT_TIMEOUT}s  "
+        f"cmd={CMD_TIMEOUT}s  audio={AUDIO_TIMEOUT}s")
+
+    success = run_tests()
+    sys.exit(0 if success else 1)

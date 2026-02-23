@@ -1,177 +1,83 @@
 -- tests/e2e/mame_test.lua
 --
--- MAME Lua E2E test script for the RC2014 MIDI Synthesizer.
+-- Minimal MAME Lua watchdog for the null-modem E2E test.
 --
--- Invoked by run_e2e.sh via MAME's -autoboot_script flag (MAME 0.229+):
+-- With the null-modem approach the emulated serial port is wired to a TCP
+-- socket on localhost.  All test interaction (CP/M commands, output capture,
+-- assertions) is handled by null_modem_terminal.py, which connects to that
+-- socket.  This Lua script has one job: exit MAME cleanly when the Python
+-- script signals it is done.
 --
---   mame rc2014zedp -bus:5 cf -hard cheese.img -bus:12 ay_sound \
---        -nothrottle -autoboot_script tests/e2e/mame_test.lua
+-- Signalling mechanism
+-- --------------------
+-- null_modem_terminal.py writes a "done flag" file when its work is finished:
 --
--- How it works:
---   Frame counting drives a linear sequence of scripted keystrokes sent to
---   the emulated terminal via emu.keypost().  At key points screenshots are
---   taken with manager.machine.video:snapshot().  Results are written to
---   tests/e2e/results/test_result.txt so the shell runner can check them.
+--   tests/e2e/results/mame_done.flag
 --
--- Timing:
---   All timing is in *emulated* frames (the RC2014 terminal runs at ~60 Hz
---   in MAME).  With -nothrottle, wall-clock time is typically much shorter.
+-- This script polls for that file once per emulated second (every 60 frames
+-- at the rc2014zedp frame rate).  When it sees the file it removes it and
+-- calls manager.machine:exit() so that MAME exits cleanly and the shell
+-- runner can collect results.
+--
+-- A frame-count safety cutoff is also provided so that a hung Python script
+-- cannot leave MAME running forever.
 --
 -- Requirements: MAME 0.229+ (tested with 0.264)
 
--- ---------------------------------------------------------------------------
--- Configuration
--- ---------------------------------------------------------------------------
-
 local RESULTS_DIR = "tests/e2e/results"
-local RESULT_FILE = RESULTS_DIR .. "/test_result.txt"
+local DONE_FLAG   = RESULTS_DIR .. "/mame_done.flag"
 
--- Emulated-frame budgets (60 frames ≈ 1 emulated second)
-local FRAMES_BOOT    = 600   -- 10 s: CP/M BIOS init + CF card read + A> prompt
-local FRAMES_STARTUP = 240   -- 4 s:  midisynth binary loads and prints banner
-local FRAMES_CMD     = 120   -- 2 s:  simple command completes and prints output
-local FRAMES_AUDIO   = 600   -- 10 s: full audio test sequence (tones + scale + arp)
-
--- ---------------------------------------------------------------------------
--- Build the ordered test sequence
--- Each entry: { frame = <absolute frame>, keys = <string or nil>, desc = <string> }
--- A nil 'keys' value means "exit MAME" (no more input to send).
--- ---------------------------------------------------------------------------
-
-local sequence = {}
-
-local function build_sequence()
-    local f = FRAMES_BOOT
-
-    local function step(keys, desc, extra_frames)
-        table.insert(sequence, { frame = f, keys = keys, desc = desc })
-        f = f + (extra_frames or FRAMES_CMD)
-    end
-
-    -- Boot: type the program name at the CP/M A> prompt
-    step("midisyn\r", "boot: launch midisynth",  FRAMES_STARTUP)
-
-    -- Interactive commands (each produces a known text response)
-    step("h",         "cmd: help",    FRAMES_CMD)
-    step("s",         "cmd: status",  FRAMES_CMD)
-    step("i",         "cmd: ioports", FRAMES_CMD)
-
-    -- Audio test – generates actual YM2149 register writes through the whole
-    -- test_sequence / scale / arpeggio chain; allow extra frames.
-    step("t",         "cmd: audio",   FRAMES_AUDIO)
-
-    -- Quit; the program calls exit(0) which returns to the CP/M prompt
-    step("q",         "cmd: quit",    FRAMES_CMD)
-
-    -- Sentinel: exit MAME
-    table.insert(sequence, { frame = f, keys = nil, desc = "exit MAME" })
-end
+-- Safety cutoff: exit after this many emulated frames regardless.
+-- 72000 frames @ ~60 fps ≈ 20 minutes of emulated time.  With -nothrottle
+-- this is far longer than any real test run.
+local MAX_FRAMES = 72000
 
 -- ---------------------------------------------------------------------------
--- State
+-- Initialise
 -- ---------------------------------------------------------------------------
 
-local frame_count = 0
-local step_index  = 1
-local result_file = nil
-
--- ---------------------------------------------------------------------------
--- Helpers
--- ---------------------------------------------------------------------------
-
-local function log(msg)
-    local line = string.format("[e2e frame=%-6d] %s", frame_count, msg)
-    print(line)
-    if result_file then
-        result_file:write(line .. "\n")
-        result_file:flush()
-    end
-end
-
-local function take_snapshot()
-    -- Wrapped in pcall so that headless (-video none) mode does not crash the
-    -- script; snapshot() is a no-op when there is no video output.
-    local ok, err = pcall(function()
-        manager.machine.video:snapshot()
-    end)
-    if not ok then
-        log("snapshot skipped: " .. tostring(err))
-    end
-end
-
--- ---------------------------------------------------------------------------
--- MAME callbacks
--- ---------------------------------------------------------------------------
-
--- In MAME 0.264+ emu.register_start no longer fires after the script loads.
--- Perform all initialisation at the top level instead.
-build_sequence()
-
--- Create results directory (MAME is invoked from the project root)
 os.execute("mkdir -p " .. RESULTS_DIR)
 os.execute("mkdir -p " .. RESULTS_DIR .. "/snapshots")
 
-result_file = io.open(RESULT_FILE, "w")
-if not result_file then
-    print("[e2e] WARNING: cannot write " .. RESULT_FILE)
-end
+local frame_count = 0
 
-log("test started — " .. #sequence .. " steps")
-log(string.format("timing — boot:%d startup:%d cmd:%d audio:%d frames",
-    FRAMES_BOOT, FRAMES_STARTUP, FRAMES_CMD, FRAMES_AUDIO))
+print("[mame_test] null-modem watchdog started")
+print("[mame_test] Waiting for done flag: " .. DONE_FLAG)
+print("[mame_test] Safety cutoff: " .. MAX_FRAMES .. " frames")
 
--- emu.register_frame_done still works in MAME 0.264 and fires after each
--- rendered frame, giving us a reliable per-frame tick even in -video none mode.
+-- ---------------------------------------------------------------------------
+-- Per-frame callback
+-- ---------------------------------------------------------------------------
+
 emu.register_frame_done(function()
     frame_count = frame_count + 1
 
-    -- Nothing left to do once all steps are dispatched
-    if step_index > #sequence then
-        return
-    end
-
-    local step = sequence[step_index]
-    if frame_count < step.frame then
-        return
-    end
-
-    -- Time to execute this step
-    log("step " .. step_index .. "/" .. #sequence .. ": " .. step.desc)
-
-    if step.keys == nil then
-        -- Final sentinel: write result and exit
-        log("all steps complete")
-        if result_file then
-            result_file:write("RESULT: PASS\n")
-            result_file:close()
-            result_file = nil
+    -- Poll for the done flag approximately once per emulated second.
+    if frame_count % 60 == 0 then
+        local fh = io.open(DONE_FLAG, "r")
+        if fh then
+            fh:close()
+            os.remove(DONE_FLAG)
+            print(string.format(
+                "[mame_test] Done flag found at frame %d — exiting MAME",
+                frame_count))
+            manager.machine:exit()
+            return
         end
-        manager.machine:exit()
-        return
     end
 
-    -- Snapshot the screen before sending input so we can see the state the
-    -- emulator was in when each command was issued.
-    take_snapshot()
-
-    emu.keypost(step.keys)
-    step_index = step_index + 1
+    -- Safety cutoff
+    if frame_count >= MAX_FRAMES then
+        print(string.format(
+            "[mame_test] Safety timeout reached (%d frames) — forcing exit",
+            MAX_FRAMES))
+        manager.machine:exit()
+    end
 end)
 
--- emu.add_machine_stop_notifier is the MAME 0.264+ replacement for
--- emu.register_stop. Guarantee the result file is closed on any exit.
+-- Guarantee a clean close on any machine-stop event (user closes window, etc.)
 local _stop_sub = emu.add_machine_stop_notifier(function()
-    if result_file then
-        if step_index > #sequence then
-            result_file:write("RESULT: PASS\n")
-        else
-            local pending = sequence[step_index]
-            result_file:write(string.format(
-                "RESULT: INCOMPLETE — stopped at step %d/%d (%s)\n",
-                step_index, #sequence,
-                pending and pending.desc or "?"))
-        end
-        result_file:close()
-        result_file = nil
-    end
+    print(string.format("[mame_test] Machine stopping at frame %d", frame_count))
+    -- Clean up the done flag if it still exists
+    os.remove(DONE_FLAG)
 end)

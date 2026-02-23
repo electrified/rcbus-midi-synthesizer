@@ -3,18 +3,39 @@
 #
 # End-to-end test runner for the RC2014 MIDI Synthesizer using MAME.
 #
-# The test:
-#   1. Builds the synthesizer binary inside a z88dk Docker container.
-#   2. Copies the binary onto a scratch copy of the CP/M hard-disk image.
-#   3. Boots the RC2014 emulation in MAME with the Lua test script.
-#   4. The Lua script types scripted commands at the emulated CP/M prompt
-#      and collects results in tests/e2e/results/test_result.txt.
-#   5. This script reads that file and exits 0 (pass) or 1 (fail).
-#   6. Audio from the YM2149 emulation is recorded to results/audio.wav
-#      via MAME's -wavwrite flag and verified for non-silence.
+# How it works
+# ------------
+# 1. Builds the synthesizer binary inside a z88dk Docker container.
+# 2. Copies the binary onto a scratch copy of the CP/M hard-disk image.
+# 3. Boots the RC2014 emulation in MAME with its serial port wired to a
+#    null-modem TCP socket (see "Null-modem approach" below).
+# 4. null_modem_terminal.py connects to that socket, waits for the CP/M A>
+#    prompt, launches midisynth, runs interactive commands (h/s/i/t/q), and
+#    verifies the actual text output.
+# 5. When done, the Python script writes tests/e2e/results/test_result.txt
+#    and signals mame_test.lua to exit MAME via a done-flag file.
+# 6. This script reads test_result.txt and exits 0 (pass) or 1 (fail).
+# 7. Audio from the YM2149 emulation is recorded via MAME's -wavwrite flag.
+#
+# Null-modem approach (inspired by https://blog.thestateofme.com/2022/05/25/
+#   attaching-a-terminal-emulator-to-a-mame-serial-port/)
+# ----------------------------------------------------------------
+# Instead of using MAME's built-in terminal emulation (where the only way to
+# interact is via emu.keypost() inside a Lua script), we wire the emulated
+# serial port to a TCP socket:
+#
+#   -<RS232_SLOT> null_modem -bitb socket.localhost:<PORT>
+#
+# This lets null_modem_terminal.py connect to the socket and perform genuine
+# bidirectional serial I/O: it can read exactly what CP/M and midisynth print
+# and assert on that text, instead of relying on frame-timed blind key-presses.
+#
+# MAME's built-in terminal window is replaced by "No screens attached to the
+# system" — which is fine; all interaction goes through the TCP socket.
 #
 # Requirements:
 #   mame         — MAME emulator with rc2014zedp driver (0.229+, tested with 0.264)
+#   python3      — Python 3.9+ (stdlib only, no extra packages needed)
 #   docker       — for z88dk build container
 #   cpmcp/cpmls  — cpmtools package  (apt install cpmtools)
 #   sox          — optional, for audio silence detection (apt install sox)
@@ -22,28 +43,18 @@
 # One-time setup (RC2014 ROM + wbw_hd512 diskdef):
 #   ./tests/e2e/setup_e2e.sh
 #
-# Audio recording notes:
-#   MAME's -wavwrite taps the internal mixer independently of the speaker
-#   output device, so audio is captured even in headless mode.  In headless
-#   mode the script sets SDL_AUDIODRIVER=dummy so the SDL sound backend can
-#   initialise (and therefore process audio) without a real sound card.
-#   The recorded WAV is kept in results/ as a CI artefact for manual review.
-#
-# Headless (CI) notes:
-#   - If no DISPLAY/WAYLAND_DISPLAY is set the script enables headless mode.
-#   - -video none requires MAME 0.229+.  On older MAME, wrap with Xvfb.
-#   - With -video none, MAME snapshots are skipped automatically (the Lua
-#     script handles this gracefully).
-#
 # Usage:
 #   ./tests/e2e/run_e2e.sh [OPTIONS]
 #
 # Options:
-#   --no-build       Skip the Docker build step (reuse existing cheese.img)
-#   --headless       Force headless mode even when a display is available
-#   --timeout N      MAME watchdog timeout in seconds (default: 180)
-#   --mame PATH      Path to the MAME binary (default: mame or /usr/games/mame, or $MAME env var)
-#   -h, --help       Show this help and exit
+#   --no-build           Skip the Docker build step (reuse existing cheese.img)
+#   --headless           Force headless mode even when a display is available
+#   --timeout N          Overall watchdog timeout in seconds (default: 300)
+#   --mame PATH          Path to the MAME binary (default: mame or $MAME env var)
+#   --serial-port PORT   TCP port for the null-modem socket (default: auto)
+#   --rs232-slot SLOT    MAME slot name for the RS232 port (default: auto-detect)
+#   --list-slots         Print MAME -listslots output for rc2014zedp and exit
+#   -h, --help           Show this help and exit
 
 set -euo pipefail
 
@@ -55,25 +66,33 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RESULTS_DIR="$SCRIPT_DIR/results"
 
 # ---------------------------------------------------------------------------
-# Defaults (can be overridden by env vars or CLI flags)
+# Defaults (overridable by env vars or CLI flags)
 # ---------------------------------------------------------------------------
 MAME_CMD="${MAME:-$(command -v mame 2>/dev/null || command -v /usr/games/mame 2>/dev/null || echo mame)}"
 HD_IMAGE="${HD_IMAGE:-$PROJECT_DIR/cheese.img}"
-TEST_TIMEOUT="${TEST_TIMEOUT:-180}"
+TEST_TIMEOUT="${TEST_TIMEOUT:-300}"
 BUILD=true
 HEADLESS=false
+SERIAL_PORT="${SERIAL_PORT:-}"      # empty → auto-detect a free port
+RS232_SLOT="${RS232_SLOT:-}"        # empty → auto-discover via mame -listslots
+LIST_SLOTS=false
 
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --no-build)        BUILD=false ;;
-        --headless)        HEADLESS=true ;;
-        --timeout)         TEST_TIMEOUT="$2"; shift ;;
-        --timeout=*)       TEST_TIMEOUT="${1#*=}" ;;
-        --mame)            MAME_CMD="$2"; shift ;;
-        --mame=*)          MAME_CMD="${1#*=}" ;;
+        --no-build)         BUILD=false ;;
+        --headless)         HEADLESS=true ;;
+        --timeout)          TEST_TIMEOUT="$2"; shift ;;
+        --timeout=*)        TEST_TIMEOUT="${1#*=}" ;;
+        --mame)             MAME_CMD="$2"; shift ;;
+        --mame=*)           MAME_CMD="${1#*=}" ;;
+        --serial-port)      SERIAL_PORT="$2"; shift ;;
+        --serial-port=*)    SERIAL_PORT="${1#*=}" ;;
+        --rs232-slot)       RS232_SLOT="$2"; shift ;;
+        --rs232-slot=*)     RS232_SLOT="${1#*=}" ;;
+        --list-slots)       LIST_SLOTS=true ;;
         -h|--help)
             sed -n '/^# /p' "$0" | sed 's/^# \?//'
             exit 0 ;;
@@ -91,13 +110,14 @@ fi
 # ---------------------------------------------------------------------------
 # Logging helpers
 # ---------------------------------------------------------------------------
-_ts() { date '+%H:%M:%S'; }
+_ts()  { date '+%H:%M:%S'; }
 info() { echo "[$(_ts)]       $*"; }
 pass() { echo "[$(_ts)] PASS  $*"; }
+warn() { echo "[$(_ts)] WARN  $*"; }
 fail() { echo "[$(_ts)] FAIL  $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
-echo "=== RC2014 MIDI Synthesizer — MAME E2E Test ==="
+echo "=== RC2014 MIDI Synthesizer — MAME E2E Test (null-modem) ==="
 info "Project dir : $PROJECT_DIR"
 info "Disk image  : $HD_IMAGE"
 info "MAME        : $MAME_CMD"
@@ -106,18 +126,26 @@ info "Timeout     : ${TEST_TIMEOUT}s"
 echo ""
 
 # ---------------------------------------------------------------------------
+# --list-slots helper: show all slots for rc2014zedp and exit
+# ---------------------------------------------------------------------------
+if [[ "$LIST_SLOTS" == true ]]; then
+    info "Listing MAME slots for rc2014zedp …"
+    "$MAME_CMD" rc2014zedp -listslots 2>&1
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Step 0: Dependency checks
 # ---------------------------------------------------------------------------
-info "Checking dependencies..."
+info "Checking dependencies…"
 
-require_cmd() {
-    command -v "$1" &>/dev/null || fail "'$1' not found — $2"
-}
+require_cmd() { command -v "$1" &>/dev/null || fail "'$1' not found — $2"; }
 
 require_cmd "$MAME_CMD" "install MAME from https://www.mamedev.org/"
-require_cmd docker     "install Docker from https://docs.docker.com/"
-require_cmd cpmls      "install cpmtools: apt install cpmtools"
-require_cmd cpmcp      "install cpmtools: apt install cpmtools"
+require_cmd docker      "install Docker from https://docs.docker.com/"
+require_cmd cpmls       "install cpmtools: apt install cpmtools"
+require_cmd cpmcp       "install cpmtools: apt install cpmtools"
+require_cmd python3     "install Python 3: apt install python3"
 
 pass "Dependencies present"
 echo ""
@@ -126,7 +154,7 @@ echo ""
 # Step 1: Build
 # ---------------------------------------------------------------------------
 if [[ "$BUILD" == true ]]; then
-    info "Building with z88dk Docker..."
+    info "Building with z88dk Docker…"
     cd "$PROJECT_DIR"
     ./build_docker.sh
     echo ""
@@ -135,7 +163,7 @@ fi
 # ---------------------------------------------------------------------------
 # Step 2: Verify the disk image contains the binary
 # ---------------------------------------------------------------------------
-info "Verifying disk image..."
+info "Verifying disk image…"
 
 [[ -f "$HD_IMAGE" ]] || fail "Disk image not found: $HD_IMAGE
   Run './build_docker.sh' first, or supply HD_IMAGE=/path/to/image.img"
@@ -159,10 +187,65 @@ info "Scratch image: $TEST_IMAGE"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 4: Run MAME with the Lua test script
+# Step 4: Discover the RS232 slot (if not provided manually)
 # ---------------------------------------------------------------------------
-info "Launching MAME..."
+# mame rc2014zedp -listslots emits lines like:
+#   rc2014zedp   bus:2:sio:porta:rs232   null_modem   terminal
+# We look for a line that contains both "null_modem" and "terminal" to
+# identify the console serial port, then extract the slot-name column.
 
+discover_rs232_slot() {
+    local machine="rc2014zedp"
+    local slot
+    slot=$(
+        "$MAME_CMD" "$machine" -listslots 2>/dev/null \
+        | grep -v "^SYSTEM" \
+        | awk '
+            /null_modem/ && /terminal/ {
+                # Column 2 is the slot device path
+                print $2
+                exit
+            }
+        '
+    )
+    echo "$slot"
+}
+
+if [[ -z "$RS232_SLOT" ]]; then
+    info "Auto-detecting RS232 slot for rc2014zedp…"
+    RS232_SLOT="$(discover_rs232_slot)"
+    if [[ -z "$RS232_SLOT" ]]; then
+        warn "Could not auto-detect RS232 slot."
+        warn "Run with --list-slots to inspect available slots, then retry with"
+        warn "  --rs232-slot <SLOT_NAME>"
+        fail "RS232 slot discovery failed — cannot configure null-modem socket."
+    fi
+    info "Detected RS232 slot: $RS232_SLOT"
+else
+    info "Using supplied RS232 slot: $RS232_SLOT"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Step 5: Pick a free TCP port for the null-modem socket
+# ---------------------------------------------------------------------------
+if [[ -z "$SERIAL_PORT" ]]; then
+    SERIAL_PORT=$(python3 -c "
+import socket
+s = socket.socket()
+s.bind(('', 0))
+print(s.getsockname()[1])
+s.close()
+")
+    info "Auto-selected TCP port: $SERIAL_PORT"
+else
+    info "Using supplied TCP port: $SERIAL_PORT"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Step 6: Build the MAME command line
+# ---------------------------------------------------------------------------
 MAME_ARGS=(
     rc2014zedp
     -bus:5  cf
@@ -170,98 +253,130 @@ MAME_ARGS=(
     -bus:12 ay_sound
     -nothrottle
     -skip_gameinfo
-    -snapshot_directory "$RESULTS_DIR/snapshots"
-    -snapname "step_%04i"
     -autoboot_script "$SCRIPT_DIR/mame_test.lua"
+    # Wire the emulated serial port to a TCP socket via null-modem device
+    "-${RS232_SLOT}" null_modem
+    -bitb "socket.localhost:${SERIAL_PORT}"
 )
 
 AUDIO_FILE="$RESULTS_DIR/audio.wav"
 rm -f "$AUDIO_FILE"
-
-# Always record audio via MAME's internal mixer tap — this is independent of
-# the speaker output device, so it works even when speakers are disabled.
 MAME_ARGS+=(-wavwrite "$AUDIO_FILE")
 
 if [[ "$HEADLESS" == true ]]; then
-    # SDL_AUDIODRIVER=dummy lets SDL initialise its audio backend (required for
-    # MAME's mixer to run and populate the WAV file) without a real sound card.
     export SDL_AUDIODRIVER=dummy
-    # -video none requires MAME 0.229+; older installs need Xvfb.
+    # With null-modem the emulated system has no screen, so -video none is fine.
     MAME_ARGS+=(-video none -sound sdl)
-    info "Video       : none (headless, MAME 0.229+)"
-    info "Audio       : SDL dummy driver → $AUDIO_FILE"
+    info "Video       : none (headless)"
+    info "Audio       : SDL dummy → $AUDIO_FILE"
 else
+    # Even in windowed mode MAME will show "No screens attached" — that is
+    # expected when null-modem replaces the built-in terminal.
     MAME_ARGS+=(-window -nomaximize -sound sdl)
-    info "Video       : window"
+    info "Video       : window (will show 'No screens attached' — expected)"
     info "Audio       : SDL → speakers + $AUDIO_FILE"
 fi
 
 LOG_FILE="$RESULTS_DIR/mame.log"
 RESULT_FILE="$RESULTS_DIR/test_result.txt"
-rm -f "$RESULT_FILE"
+rm -f "$RESULT_FILE" "$RESULTS_DIR/mame_done.flag"
 
-info "Command: $MAME_CMD ${MAME_ARGS[*]}"
+info "MAME command: $MAME_CMD ${MAME_ARGS[*]}"
 echo ""
 
-# Run MAME with a watchdog timeout; collect all output to log file
-set +e
+# ---------------------------------------------------------------------------
+# Step 7: Launch MAME in the background
+# ---------------------------------------------------------------------------
+info "Launching MAME in background (null-modem socket on port ${SERIAL_PORT})…"
 cd "$PROJECT_DIR"
-timeout "$TEST_TIMEOUT" "$MAME_CMD" "${MAME_ARGS[@]}" >"$LOG_FILE" 2>&1
-MAME_EXIT=$?
+timeout "$TEST_TIMEOUT" "$MAME_CMD" "${MAME_ARGS[@]}" >"$LOG_FILE" 2>&1 &
+MAME_PID=$!
+info "MAME PID: $MAME_PID"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Step 8: Run the null-modem terminal script (foreground)
+# ---------------------------------------------------------------------------
+info "Running null_modem_terminal.py…"
+info "(all CP/M / midisynth output will appear below)"
+echo "--- serial output begin ---"
+
+set +e
+SERIAL_HOST=localhost \
+SERIAL_PORT="$SERIAL_PORT" \
+RESULTS_DIR="$RESULTS_DIR" \
+CONNECT_TIMEOUT=60 \
+BOOT_TIMEOUT=120 \
+CMD_TIMEOUT=30 \
+AUDIO_TIMEOUT=60 \
+timeout "$TEST_TIMEOUT" python3 "$SCRIPT_DIR/null_modem_terminal.py"
+PYTHON_EXIT=$?
 set -e
 
-if [[ $MAME_EXIT -eq 124 ]]; then
-    fail "Test timed out after ${TEST_TIMEOUT}s
-  Increase with --timeout N, or check MAME is booting the disk correctly.
-  MAME log: $LOG_FILE"
-fi
-
+echo "--- serial output end ---"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 5: Verify audio recording
+# Step 9: Wait for MAME to exit
 # ---------------------------------------------------------------------------
-info "Checking audio recording..."
+# null_modem_terminal.py writes the done flag, which mame_test.lua picks up
+# and calls manager.machine:exit().  Give MAME a few seconds to exit cleanly.
+info "Waiting for MAME to exit (PID $MAME_PID)…"
+for _i in $(seq 1 15); do
+    if ! kill -0 "$MAME_PID" 2>/dev/null; then
+        break
+    fi
+    sleep 1
+done
 
-# WAV header alone is 44 bytes; anything beyond that is actual sample data.
-# We expect at least a few seconds of audio from the test sequence.
+# If MAME is still running, kill it
+if kill -0 "$MAME_PID" 2>/dev/null; then
+    warn "MAME did not exit within 15s — sending SIGTERM"
+    kill "$MAME_PID" 2>/dev/null || true
+    sleep 2
+    kill -0 "$MAME_PID" 2>/dev/null && kill -9 "$MAME_PID" 2>/dev/null || true
+fi
+
+# Collect MAME exit status (ignore if already gone)
+wait "$MAME_PID" 2>/dev/null || true
+echo ""
+
+# ---------------------------------------------------------------------------
+# Step 10: Verify audio recording
+# ---------------------------------------------------------------------------
+info "Checking audio recording…"
+
 AUDIO_MIN_BYTES=88200   # ~0.5 s at 44100 Hz / 16-bit / stereo
 
 if [[ ! -f "$AUDIO_FILE" ]]; then
-    info "WARNING: No WAV file found at $AUDIO_FILE"
-    info "         MAME may not support -wavwrite with this configuration."
+    warn "No WAV file at $AUDIO_FILE — MAME may not support -wavwrite here."
 else
     AUDIO_BYTES=$(wc -c < "$AUDIO_FILE")
     if [[ "$AUDIO_BYTES" -lt "$AUDIO_MIN_BYTES" ]]; then
-        info "WARNING: WAV file is very small (${AUDIO_BYTES} bytes < ${AUDIO_MIN_BYTES} expected)"
-        info "         Audio processing may not have run.  Try without SDL_AUDIODRIVER=dummy."
+        warn "WAV is very small (${AUDIO_BYTES} bytes < ${AUDIO_MIN_BYTES} expected)"
+        warn "Audio processing may not have run."
     else
         info "WAV file: $AUDIO_FILE (${AUDIO_BYTES} bytes)"
-
-        # Use sox to check for non-silence if it is available.
         if command -v sox &>/dev/null; then
-            # 'sox ... -n stat' writes stats to stderr; the Maximum amplitude
-            # line is 0.000000 for a file that contains only silence.
             MAX_AMP=$(sox "$AUDIO_FILE" -n stat 2>&1 \
                       | awk -F: '/Maximum amplitude/ { gsub(/ /,"",$2); print $2 }')
             if awk "BEGIN { exit !($MAX_AMP > 0.001) }" 2>/dev/null; then
                 pass "Audio non-silent (peak amplitude ${MAX_AMP})"
             else
-                info "WARNING: Audio appears silent (peak amplitude ${MAX_AMP})"
-                info "         YM2149 chip detection may have failed in MAME — check the log."
+                warn "Audio appears silent (peak amplitude ${MAX_AMP})"
+                warn "YM2149 chip detection may have failed in MAME — check the log."
             fi
         else
             pass "WAV recorded: ${AUDIO_BYTES} bytes (install sox for silence check)"
         fi
     fi
 fi
-
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 6: Evaluate test results
+# Step 11: Evaluate test results
 # ---------------------------------------------------------------------------
-info "Evaluating results..."
+info "Evaluating results…"
 
 if [[ -f "$RESULT_FILE" ]]; then
     echo ""
@@ -278,16 +393,14 @@ if [[ -f "$RESULT_FILE" ]]; then
         fail "E2E test did not pass — see $RESULT_FILE and $LOG_FILE"
     fi
 else
-    # The Lua script did not produce a result file.
-    # Fall back to the MAME exit code as a best-effort signal.
-    info "No result file generated (Lua script may not have run)"
-    info "MAME exit code: $MAME_EXIT"
-    if [[ $MAME_EXIT -eq 0 ]]; then
-        pass "MAME exited 0 (treating as pass — no assertions made)"
+    info "No result file generated (null_modem_terminal.py may not have run)"
+    info "Python exit code: $PYTHON_EXIT"
+    if [[ $PYTHON_EXIT -eq 0 ]]; then
+        pass "Python exited 0 (treating as pass — no assertions made)"
     else
         info "MAME log tail:"
         tail -30 "$LOG_FILE" | sed 's/^/  /'
-        fail "MAME exited with code $MAME_EXIT — see $LOG_FILE"
+        fail "Python script exited $PYTHON_EXIT — see $LOG_FILE"
     fi
 fi
 
