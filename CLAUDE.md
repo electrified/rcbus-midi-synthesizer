@@ -43,21 +43,20 @@ The tests use MAME's null-modem serial emulation over TCP:
 ### E2E Test Flow
 
 1. Wait for `Boot [H=Help]:` (RomWBW boot loader)
-2. Send boot disk number (`1` = ROM Disk, which always has CP/M)
+2. Send boot disk number (`2` = IDE0/CF hard disk)
 3. Wait for `A>` (CP/M prompt)
-4. Switch to drive `C:` (IDE0/CF hard disk with midisynth)
-5. Launch `midisynth`, wait for `Ready.`
-6. Run commands: `h` (help), `s` (status), `i` (I/O ports), `t` (audio test), `q` (quit)
-7. Assert on serial output text for each command
-8. Check WAV audio recording for non-silence
+4. Launch `midisynth`, wait for `Ready.`
+5. Run commands: `h` (help), `s` (status), `i` (I/O ports), `t` (audio test), `q` (quit)
+6. Assert on serial output text for each command
+7. Check WAV audio recording for non-silence
 
 ### Common Issues
 
 - **RomWBW ROM CRC mismatch**: MAME warns about wrong checksums when using a RomWBW version newer than 3.0.1. This is harmless — the ROM still boots. The warning can be ignored.
 - **RS232 slot detection**: MAME 0.264 uses `bus:4:sio:rs232a`. The slot auto-detection uses `grep -oP 'bus:\S*rs232a'`.
 - **Serial line endings**: CP/M expects CR (`\r`), not LF (`\n`). The `send()` method in null_modem_terminal.py transmits raw bytes.
-- **Boot disk number**: Default is `1` (ROM Disk — always has CP/M). The CF hard disk (`cheese.img`) is a data-only image without CP/M system tracks, so it cannot be booted directly. Override with `BOOT_DISK` env var.
-- **Hard disk drive letter**: After booting from ROM Disk, IDE0 maps to `C:`. Override with `HD_DRIVE` env var.
+- **Boot disk number**: Default is `2` (IDE0/CF). The `run_e2e.sh` script overlays CP/M system tracks onto the test image so it is bootable. Override with `BOOT_DISK` env var.
+- **System tracks**: `cheese.img` from the build has no CP/M boot code. `setup_e2e.sh` extracts system tracks from `hd512_cpm22.img` in the RomWBW package, and `run_e2e.sh` overlays them onto the scratch image before booting.
 
 ## Code Architecture
 

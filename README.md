@@ -155,7 +155,7 @@ sudo apt install mame cpmtools python3 sox
 1. **Build**: Compiles the synthesizer via the z88dk Docker container and copies the binary onto the CP/M hard-disk image.
 2. **TCP server**: `null_modem_terminal.py` starts a TCP server on a free port.
 3. **MAME launch**: MAME boots `rc2014zedp` with the emulated SIO serial port wired to the TCP server via null-modem (`-bitb socket.127.0.0.1:<port>`).
-4. **Boot interaction**: The Python script waits for the RomWBW boot loader, boots from the ROM Disk (which always has CP/M), switches to drive `C:` (the CF hard disk), then waits for the CP/M prompt.
+4. **Boot interaction**: The Python script waits for the RomWBW boot loader, selects the IDE0/CF boot disk (with overlaid CP/M system tracks), then waits for the CP/M `A>` prompt.
 5. **Test commands**: Launches `midisynth`, then sends `h` (help), `s` (status), `i` (I/O ports), `t` (audio test), `q` (quit) and asserts on the serial output.
 6. **Audio check**: The WAV file recorded by `-wavwrite` is checked for non-silence (requires `sox`).
 7. **Cleanup**: A Lua watchdog (`mame_test.lua`) monitors for a done-flag file and exits MAME cleanly.
@@ -193,8 +193,7 @@ run_e2e.sh           Shell orchestrator (build, launch, collect results)
 | `MAME`           | Path to MAME binary                              |
 | `HD_IMAGE`       | Path to CP/M hard disk image                     |
 | `SERIAL_PORT`    | TCP port for null-modem socket                   |
-| `BOOT_DISK`      | RomWBW boot disk number (default: `1` for ROM Disk) |
-| `HD_DRIVE`       | CP/M drive letter for IDE0 hard disk (default: `C`) |
+| `BOOT_DISK`      | RomWBW boot disk number (default: `2` for IDE0)  |
 
 ## Project Structure
 

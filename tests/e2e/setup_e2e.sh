@@ -210,6 +210,29 @@ else
         mkdir -p "$ROM_DIR"
         mv "$TMPDIR_DL/$MAME_ROM_NAME" "$ROM_DEST"
         pass "ROM installed: $ROM_DEST"
+
+        # Also extract CP/M system tracks from the pre-built bootable
+        # disk image.  These are needed to make cheese.img bootable in
+        # the e2e tests (the cheese.img created by build_docker.sh only
+        # has the data area, not the system tracks).
+        SYSTRACKS_FILE="$ROM_DIR/hd512_cpm22_systracks.bin"
+        if [[ ! -f "$SYSTRACKS_FILE" ]]; then
+            HD512_IMG_IN_ZIP=$(unzip -Z1 "$PKG_ZIP" | grep -i "Binary/hd512_cpm22.img$" | head -1 || true)
+            if [[ -n "$HD512_IMG_IN_ZIP" ]]; then
+                info "  Extracting CP/M system tracks for bootable hard disk images…"
+                # System tracks = first boottrk * sectrk * seclen = 32 * 8 * 512 = 131072 bytes
+                unzip -p "$PKG_ZIP" "$HD512_IMG_IN_ZIP" | head -c 131072 > "$SYSTRACKS_FILE"
+                SYSTRACKS_SIZE=$(wc -c < "$SYSTRACKS_FILE")
+                if [[ "$SYSTRACKS_SIZE" -eq 131072 ]]; then
+                    pass "CP/M system tracks extracted: $SYSTRACKS_FILE (${SYSTRACKS_SIZE} bytes)"
+                else
+                    info "WARNING: system tracks file unexpected size: ${SYSTRACKS_SIZE} (expected 131072)"
+                fi
+            else
+                info "WARNING: Could not find hd512_cpm22.img in RomWBW package"
+                info "         E2E tests will not be able to boot from the hard disk."
+            fi
+        fi
     fi
 fi
 echo ""
