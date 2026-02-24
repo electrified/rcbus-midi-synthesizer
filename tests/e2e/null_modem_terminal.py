@@ -402,8 +402,9 @@ def run_tests() -> bool:
         # 4. Launch midisynth
         # ------------------------------------------------------------------
         # After booting from IDE0, A: is the hard disk with midisynth.
-        log("Launching midisynth …")
-        term.send("midisynth\r")
+        # CP/M 8.3 filename: midisynth.com is stored as midisyn.com
+        log("Launching midisyn …")
+        term.send("midisyn\r")
         try:
             launch_out = term.wait_for("Ready.", timeout=CMD_TIMEOUT)
         except TimeoutError as exc:
