@@ -123,6 +123,79 @@ A standalone test program (`test_minimal.c`) is included for verifying basic YM2
 
 Then run `A>mt` at the CP/M prompt.
 
+## E2E Testing (MAME)
+
+Automated end-to-end tests run the synthesizer inside MAME's RC2014 emulation using a null-modem serial connection. The test suite boots RomWBW/CP/M, launches `midisynth`, exercises interactive commands (help, status, I/O ports, audio test), and verifies output over the serial link. Audio is recorded via MAME's `-wavwrite` and checked for non-silence.
+
+### Prerequisites
+
+```bash
+# Install dependencies (Debian/Ubuntu)
+sudo apt install mame cpmtools python3 sox
+
+# One-time setup: download RomWBW ROM and install cpmtools disk format
+./tests/e2e/setup_e2e.sh
+```
+
+### Running the Tests
+
+```bash
+# Full run (build + test)
+./tests/e2e/run_e2e.sh
+
+# Skip build step (reuse existing cheese.img)
+./tests/e2e/run_e2e.sh --no-build
+
+# Force headless mode (also auto-detected when no display is available)
+./tests/e2e/run_e2e.sh --headless --no-build
+```
+
+### How It Works
+
+1. **Build**: Compiles the synthesizer via the z88dk Docker container and copies the binary onto the CP/M hard-disk image.
+2. **TCP server**: `null_modem_terminal.py` starts a TCP server on a free port.
+3. **MAME launch**: MAME boots `rc2014zedp` with the emulated SIO serial port wired to the TCP server via null-modem (`-bitb socket.127.0.0.1:<port>`).
+4. **Boot interaction**: The Python script waits for the RomWBW boot loader, boots from the ROM Disk (which always has CP/M), switches to drive `C:` (the CF hard disk), then waits for the CP/M prompt.
+5. **Test commands**: Launches `midisynth`, then sends `h` (help), `s` (status), `i` (I/O ports), `t` (audio test), `q` (quit) and asserts on the serial output.
+6. **Audio check**: The WAV file recorded by `-wavwrite` is checked for non-silence (requires `sox`).
+7. **Cleanup**: A Lua watchdog (`mame_test.lua`) monitors for a done-flag file and exits MAME cleanly.
+
+### Architecture
+
+```
+run_e2e.sh           Shell orchestrator (build, launch, collect results)
+  |
+  +-- null_modem_terminal.py   TCP server ← MAME connects as client
+  |     Handles: boot loader, CP/M prompt, midisynth commands, assertions
+  |
+  +-- MAME (rc2014zedp)        Emulated RC2014 with CF + AY sound
+  |     Serial port → null_modem → TCP socket
+  |
+  +-- mame_test.lua            Lua watchdog: polls done-flag, exits MAME
+```
+
+### Options
+
+| Flag                   | Description                                        |
+|------------------------|----------------------------------------------------|
+| `--no-build`           | Skip Docker build step                             |
+| `--headless`           | Force headless mode (`-video none -sound none`)    |
+| `--timeout N`          | Overall watchdog timeout in seconds (default: 300) |
+| `--mame PATH`          | Path to MAME binary                                |
+| `--serial-port PORT`   | TCP port for null-modem (default: auto)            |
+| `--rs232-slot SLOT`    | MAME RS232 slot name (default: auto-detect)        |
+| `--list-slots`         | Print MAME slot info and exit                      |
+
+### Environment Variables
+
+| Variable         | Description                                      |
+|------------------|--------------------------------------------------|
+| `MAME`           | Path to MAME binary                              |
+| `HD_IMAGE`       | Path to CP/M hard disk image                     |
+| `SERIAL_PORT`    | TCP port for null-modem socket                   |
+| `BOOT_DISK`      | RomWBW boot disk number (default: `1` for ROM Disk) |
+| `HD_DRIVE`       | CP/M drive letter for IDE0 hard disk (default: `C`) |
+
 ## Project Structure
 
 ```
@@ -145,6 +218,11 @@ include/
 test_minimal.c        — Standalone YM2149 I/O test
 build_docker.sh       — Docker-based build script (synth, test, or all)
 Makefile              — Local z88dk build
+tests/e2e/
+  run_e2e.sh          — E2E test orchestrator
+  null_modem_terminal.py — TCP server for null-modem serial I/O
+  mame_test.lua       — MAME Lua watchdog (polls done-flag, exits MAME)
+  setup_e2e.sh        — One-time ROM + diskdef setup
 ```
 
 ## Future Development
