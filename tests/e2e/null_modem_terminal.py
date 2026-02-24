@@ -367,19 +367,19 @@ def run_tests() -> bool:
                          "(no 'Boot [H=Help]:' seen)")
             return False
 
-        # RomWBW lists disks and waits for input.  The CF/IDE hard disk
-        # with our CP/M image is typically Disk 2 (IDE0).  The boot
-        # loader is a single-key interface — just send the disk number
-        # character (no CR needed).  If the disk numbering ever changes,
-        # this value can be overridden via the BOOT_DISK env var.
-        boot_disk = os.environ.get("BOOT_DISK", "2")
-        log(f"Selecting boot disk {boot_disk} …")
+        # RomWBW lists disks and waits for input.  The cheese.img CF/IDE
+        # disk does not have CP/M system tracks, so we boot from the
+        # ROM Disk (Disk 1) which always contains CP/M.  After CP/M
+        # boots, the drive mapping places IDE0 on drive C:.
+        #
+        # Disk layout (default rc2014zedp):
+        #   Disk 0  MD0   RAM Disk        → B: after boot
+        #   Disk 1  MD1   ROM Disk (boot) → A:
+        #   Disk 2  IDE0  Hard Disk (CF)  → C:
+        boot_disk = os.environ.get("BOOT_DISK", "1")
+        log(f"Selecting boot disk {boot_disk} (ROM Disk) …")
         time.sleep(0.5)
-        # Send just the disk number; RomWBW boot loader reads one char.
-        term.send(boot_disk)
-        time.sleep(0.5)
-        # Some RomWBW versions need CR to confirm, send it as well.
-        term.send("\r")
+        term.send(boot_disk + "\r")
 
         # ------------------------------------------------------------------
         # 3. Wait for CP/M A> prompt
@@ -398,8 +398,25 @@ def run_tests() -> bool:
         term._drain()
 
         # ------------------------------------------------------------------
-        # 4. Launch midisynth
+        # 4. Switch to hard-disk drive and launch midisynth
         # ------------------------------------------------------------------
+        # After booting from ROM Disk (Disk 1), the CF/IDE hard disk
+        # with midisynth is on drive C:.  Switch there first.
+        hd_drive = os.environ.get("HD_DRIVE", "C")
+        log(f"Switching to drive {hd_drive}: …")
+        term.send(f"{hd_drive}:\r")
+        try:
+            term.wait_for(f"{hd_drive}>", timeout=CMD_TIMEOUT)
+            log(f"Now on drive {hd_drive}:")
+        except TimeoutError as exc:
+            log(f"ERROR: {exc}")
+            write_result(False,
+                         f"Could not switch to drive {hd_drive}: "
+                         f"(hard disk not accessible)")
+            return False
+        time.sleep(0.3)
+        term._drain()
+
         log("Launching midisynth …")
         term.send("midisynth\r")
         try:
