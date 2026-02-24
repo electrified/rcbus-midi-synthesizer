@@ -120,17 +120,22 @@ fail() { echo "[$(_ts)] FAIL  $*" >&2; exit 1; }
 # Cleanup trap — ensure MAME and child processes are killed on exit/signal
 # ---------------------------------------------------------------------------
 MAME_PID=""
+PYTHON_PID=""
 cleanup() {
     local exit_code=$?
     set +e
+    if [[ -n "$PYTHON_PID" ]] && kill -0 "$PYTHON_PID" 2>/dev/null; then
+        warn "Cleaning up Python (PID $PYTHON_PID)…"
+        kill "$PYTHON_PID" 2>/dev/null
+    fi
     if [[ -n "$MAME_PID" ]] && kill -0 "$MAME_PID" 2>/dev/null; then
         warn "Cleaning up MAME (PID $MAME_PID)…"
         kill "$MAME_PID" 2>/dev/null
         sleep 1
         kill -0 "$MAME_PID" 2>/dev/null && kill -9 "$MAME_PID" 2>/dev/null
     fi
-    # Remove stale done flag
-    rm -f "$RESULTS_DIR/mame_done.flag" 2>/dev/null
+    # Remove stale flags
+    rm -f "$RESULTS_DIR/mame_done.flag" "$RESULTS_DIR/server_ready.flag" 2>/dev/null
     exit "$exit_code"
 }
 trap cleanup EXIT INT TERM
@@ -216,16 +221,14 @@ echo ""
 discover_rs232_slot() {
     local machine="rc2014zedp"
     local slot
+    # MAME -listslots prints slot names like "bus:4:sio:rs232a" as the
+    # second whitespace-delimited field on slot-header lines.  We look
+    # for the first RS232 port A slot (rs232a), which supports both
+    # null_modem and terminal devices.
     slot=$(
         "$MAME_CMD" "$machine" -listslots 2>/dev/null \
-        | grep -v "^SYSTEM" \
-        | awk '
-            /null_modem/ && /terminal/ {
-                # Column 2 is the slot device path
-                print $2
-                exit
-            }
-        '
+        | grep -oP 'bus:\S*rs232a' \
+        | head -1
     )
     echo "$slot"
 }
@@ -275,7 +278,7 @@ MAME_ARGS=(
     -autoboot_script "$SCRIPT_DIR/mame_test.lua"
     # Wire the emulated serial port to a TCP socket via null-modem device
     "-${RS232_SLOT}" null_modem
-    -bitb "socket.localhost:${SERIAL_PORT}"
+    -bitb "socket.127.0.0.1:${SERIAL_PORT}"
 )
 
 AUDIO_FILE="$RESULTS_DIR/audio.wav"
@@ -301,15 +304,55 @@ fi
 
 LOG_FILE="$RESULTS_DIR/mame.log"
 RESULT_FILE="$RESULTS_DIR/test_result.txt"
-rm -f "$RESULT_FILE" "$RESULTS_DIR/mame_done.flag"
+READY_FLAG="$RESULTS_DIR/server_ready.flag"
+rm -f "$RESULT_FILE" "$RESULTS_DIR/mame_done.flag" "$READY_FLAG"
 
 info "MAME command: $MAME_CMD ${MAME_ARGS[*]}"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 7: Launch MAME in the background
+# Step 7: Start null-modem terminal server (background), then launch MAME
 # ---------------------------------------------------------------------------
-info "Launching MAME in background (null-modem socket on port ${SERIAL_PORT})…"
+# MAME's null-modem device connects as a TCP *client* to the address given
+# by -bitb.  The Python script acts as the TCP *server*: it binds to the
+# port, writes a "server_ready.flag" file, and blocks on accept().  Once
+# the flag appears we know the port is listening and it is safe to start
+# MAME.
+# ---------------------------------------------------------------------------
+info "Starting null_modem_terminal.py as TCP server on port ${SERIAL_PORT}…"
+echo "--- serial output begin ---"
+
+SERIAL_HOST=127.0.0.1 \
+SERIAL_PORT="$SERIAL_PORT" \
+RESULTS_DIR="$RESULTS_DIR" \
+MAME_PID=0 \
+CONNECT_TIMEOUT=90 \
+BOOT_TIMEOUT=120 \
+CMD_TIMEOUT=30 \
+AUDIO_TIMEOUT=60 \
+timeout "$TEST_TIMEOUT" python3 "$SCRIPT_DIR/null_modem_terminal.py" &
+PYTHON_PID=$!
+info "Python server PID: $PYTHON_PID"
+
+# Wait for the Python server to signal it is listening
+info "Waiting for server_ready.flag…"
+READY_DEADLINE=$((SECONDS + 15))
+while [[ ! -f "$READY_FLAG" ]]; do
+    if ! kill -0 "$PYTHON_PID" 2>/dev/null; then
+        echo "--- serial output end ---"
+        fail "null_modem_terminal.py exited before becoming ready"
+    fi
+    if [[ $SECONDS -ge $READY_DEADLINE ]]; then
+        echo "--- serial output end ---"
+        kill "$PYTHON_PID" 2>/dev/null || true
+        fail "Timed out waiting for Python server to become ready"
+    fi
+    sleep 0.2
+done
+info "Python server is listening — launching MAME"
+
+# Step 7b: Launch MAME
+info "Launching MAME in background (connecting to null-modem server on port ${SERIAL_PORT})…"
 cd "$PROJECT_DIR"
 timeout "$TEST_TIMEOUT" "$MAME_CMD" "${MAME_ARGS[@]}" >"$LOG_FILE" 2>&1 &
 MAME_PID=$!
@@ -322,28 +365,18 @@ if ! kill -0 "$MAME_PID" 2>/dev/null; then
     info "MAME exited immediately — likely a configuration or ROM error."
     info "MAME log:"
     cat "$LOG_FILE" | sed 's/^/  /'
+    kill "$PYTHON_PID" 2>/dev/null || true
     fail "MAME failed to start (exited within 2s)"
 fi
 info "MAME running"
-echo ""
 
 # ---------------------------------------------------------------------------
-# Step 8: Run the null-modem terminal script (foreground)
+# Step 8: Wait for Python test script to finish (foreground wait)
 # ---------------------------------------------------------------------------
-info "Running null_modem_terminal.py…"
-info "(all CP/M / midisynth output will appear below)"
-echo "--- serial output begin ---"
+info "Waiting for null_modem_terminal.py to complete tests…"
 
 set +e
-SERIAL_HOST=localhost \
-SERIAL_PORT="$SERIAL_PORT" \
-RESULTS_DIR="$RESULTS_DIR" \
-MAME_PID="$MAME_PID" \
-CONNECT_TIMEOUT=60 \
-BOOT_TIMEOUT=120 \
-CMD_TIMEOUT=30 \
-AUDIO_TIMEOUT=60 \
-timeout "$TEST_TIMEOUT" python3 "$SCRIPT_DIR/null_modem_terminal.py"
+wait "$PYTHON_PID"
 PYTHON_EXIT=$?
 set -e
 

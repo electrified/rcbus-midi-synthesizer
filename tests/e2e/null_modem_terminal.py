@@ -143,46 +143,59 @@ class NullModemTerminal:
     # ------------------------------------------------------------------
 
     def connect(self, timeout: int = 60) -> bool:
-        """Retry connecting to the MAME socket until timeout.
+        """Listen on the TCP port and accept a connection from MAME.
 
-        MAME takes a few seconds to start, so we poll.
-        Returns False if connection could not be established.
+        MAME's null-modem device connects as a TCP *client* to the host:port
+        specified by its -bitb flag.  This script must therefore act as the
+        TCP *server*: bind, listen, and accept.
+
+        The server socket is created and begins listening immediately.  A
+        ``READY_FLAG`` file is written so that the shell runner knows it is
+        safe to launch MAME.  We then block on accept() until MAME connects
+        or the timeout expires.
+
+        Returns False if no connection is established within *timeout* seconds.
         """
-        deadline = time.monotonic() + timeout
-        attempt = 0
-        last_error = ""
-        while time.monotonic() < deadline:
-            attempt += 1
+        ready_flag = RESULTS_DIR / "server_ready.flag"
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server.bind((self.host, self.port))
+        except OSError as exc:
+            log(f"ERROR: could not bind to {self.host}:{self.port}: {exc}")
+            server.close()
+            return False
+        server.listen(1)
+        server.settimeout(timeout)
+        log(f"Listening on {self.host}:{self.port} (waiting for MAME to connect)")
 
-            # Check if MAME died before we even connected
-            if not is_mame_alive():
-                log(f"ERROR: MAME process (PID {MAME_PID}) is no longer running")
-                return False
+        # Signal the shell runner that we are ready for MAME to start.
+        try:
+            ready_flag.parent.mkdir(parents=True, exist_ok=True)
+            ready_flag.touch()
+        except OSError:
+            pass
 
+        try:
+            conn, addr = server.accept()
+            conn.settimeout(0.2)
+            self._sock = conn
+            self._connected = True
+            log(f"MAME connected from {addr[0]}:{addr[1]}")
+            return True
+        except socket.timeout:
+            log(f"ERROR: no connection received on {self.host}:{self.port} "
+                f"after {timeout}s")
+            return False
+        except OSError as exc:
+            log(f"ERROR: accept failed: {exc}")
+            return False
+        finally:
+            server.close()
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(2.0)
-                sock.connect((self.host, self.port))
-                # Switch to short non-blocking reads so we can poll
-                sock.settimeout(0.2)
-                self._sock = sock
-                self._connected = True
-                log(f"Connected to {self.host}:{self.port} (attempt {attempt})")
-                return True
-            except (ConnectionRefusedError, OSError) as exc:
-                last_error = str(exc)
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-                if attempt % 20 == 0:
-                    remaining = deadline - time.monotonic()
-                    log(f"  Still waiting for MAME socket … "
-                        f"attempt {attempt}, {remaining:.0f}s left")
-                time.sleep(0.5)
-        log(f"ERROR: could not connect to {self.host}:{self.port} "
-            f"after {timeout}s ({attempt} attempts): {last_error}")
-        return False
+                ready_flag.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def close(self) -> None:
         self._connected = False
@@ -339,9 +352,34 @@ def run_tests() -> bool:
 
     try:
         # ------------------------------------------------------------------
-        # 2. Wait for CP/M to boot
+        # 2. Wait for RomWBW boot loader and select boot disk
         # ------------------------------------------------------------------
-        log(f"Waiting for CP/M boot prompt (up to {BOOT_TIMEOUT}s) …")
+        log(f"Waiting for RomWBW boot loader (up to {BOOT_TIMEOUT}s) …")
+        try:
+            boot_loader_out = term.wait_for("Boot [H=Help]:", timeout=BOOT_TIMEOUT)
+            log("RomWBW boot loader reached")
+            check("RomWBW HBIOS" in boot_loader_out,
+                  "boot: RomWBW HBIOS banner present")
+        except TimeoutError as exc:
+            log(f"ERROR: {exc}")
+            write_result(False,
+                         "RomWBW boot loader did not appear "
+                         "(no 'Boot [H=Help]:' seen)")
+            return False
+
+        # RomWBW lists disks and waits for input.  The CF/IDE hard disk
+        # with our CP/M image is typically Disk 2 (IDE0).  Send "2\n" to
+        # boot from it.  If the disk numbering ever changes, this value
+        # can be overridden via the BOOT_DISK env var.
+        boot_disk = os.environ.get("BOOT_DISK", "2")
+        log(f"Selecting boot disk {boot_disk} …")
+        time.sleep(0.3)
+        term.send(boot_disk + "\n")
+
+        # ------------------------------------------------------------------
+        # 3. Wait for CP/M A> prompt
+        # ------------------------------------------------------------------
+        log("Waiting for CP/M A> prompt …")
         try:
             boot_out = term.wait_for("A>", timeout=BOOT_TIMEOUT)
             log("CP/M boot complete — got A> prompt")
@@ -355,7 +393,7 @@ def run_tests() -> bool:
         term._drain()
 
         # ------------------------------------------------------------------
-        # 3. Launch midisynth
+        # 4. Launch midisynth
         # ------------------------------------------------------------------
         log("Launching midisynth …")
         term.send("midisynth\r")
@@ -381,7 +419,7 @@ def run_tests() -> bool:
         term._drain()
 
         # ------------------------------------------------------------------
-        # 4. h — help
+        # 5. h — help
         # ------------------------------------------------------------------
         log("Running 'h' (help) …")
         help_out = term.send_cmd("h",
@@ -397,7 +435,7 @@ def run_tests() -> bool:
               "help: MIDI CC section present")
 
         # ------------------------------------------------------------------
-        # 5. s — status
+        # 6. s — status
         # ------------------------------------------------------------------
         log("Running 's' (status) …")
         # Status output varies at runtime; just ensure the command doesn't crash
@@ -407,7 +445,7 @@ def run_tests() -> bool:
         log("  status command completed (output captured to log above)")
 
         # ------------------------------------------------------------------
-        # 6. i — ioports
+        # 7. i — ioports
         # ------------------------------------------------------------------
         log("Running 'i' (ioports) …")
         io_out = term.send_cmd("i", wait_for="Data port:", timeout=CMD_TIMEOUT)
@@ -415,7 +453,7 @@ def run_tests() -> bool:
         check("Data port:"     in io_out, "ioports: Data port line present")
 
         # ------------------------------------------------------------------
-        # 7. t — audio test
+        # 8. t — audio test
         # ------------------------------------------------------------------
         log(f"Running 't' (audio test) — up to {AUDIO_TIMEOUT}s …")
         try:
@@ -431,7 +469,7 @@ def run_tests() -> bool:
             check(False, "audio test: completed within timeout")
 
         # ------------------------------------------------------------------
-        # 8. q — quit
+        # 9. q — quit
         # ------------------------------------------------------------------
         log("Running 'q' (quit) …")
         term.send_cmd("q", timeout=CMD_TIMEOUT)
