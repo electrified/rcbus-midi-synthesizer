@@ -367,17 +367,18 @@ def run_tests() -> bool:
                          "(no 'Boot [H=Help]:' seen)")
             return False
 
-        # RomWBW lists disks and waits for input.  The cheese.img CF/IDE
-        # disk does not have CP/M system tracks, so we boot from the
-        # ROM Disk (Disk 1) which always contains CP/M.  After CP/M
-        # boots, the drive mapping places IDE0 on drive C:.
+        # RomWBW lists disks and waits for input.  The CF/IDE hard disk
+        # with our CP/M image is Disk 2 (IDE0).  The run_e2e.sh script
+        # overlays CP/M system tracks onto the test image so it is
+        # bootable.  Booting directly from IDE0 makes the hard disk
+        # drive A:, which is where midisynth.com lives.
         #
         # Disk layout (default rc2014zedp):
-        #   Disk 0  MD0   RAM Disk        → B: after boot
-        #   Disk 1  MD1   ROM Disk (boot) → A:
-        #   Disk 2  IDE0  Hard Disk (CF)  → C:
-        boot_disk = os.environ.get("BOOT_DISK", "1")
-        log(f"Selecting boot disk {boot_disk} (ROM Disk) …")
+        #   Disk 0  MD0   RAM Disk
+        #   Disk 1  MD1   ROM Disk
+        #   Disk 2  IDE0  Hard Disk (CF) ← boot target
+        boot_disk = os.environ.get("BOOT_DISK", "2")
+        log(f"Selecting boot disk {boot_disk} (IDE0 Hard Disk) …")
         time.sleep(0.5)
         term.send(boot_disk + "\r")
 
@@ -398,25 +399,9 @@ def run_tests() -> bool:
         term._drain()
 
         # ------------------------------------------------------------------
-        # 4. Switch to hard-disk drive and launch midisynth
+        # 4. Launch midisynth
         # ------------------------------------------------------------------
-        # After booting from ROM Disk (Disk 1), the CF/IDE hard disk
-        # with midisynth is on drive C:.  Switch there first.
-        hd_drive = os.environ.get("HD_DRIVE", "C")
-        log(f"Switching to drive {hd_drive}: …")
-        term.send(f"{hd_drive}:\r")
-        try:
-            term.wait_for(f"{hd_drive}>", timeout=CMD_TIMEOUT)
-            log(f"Now on drive {hd_drive}:")
-        except TimeoutError as exc:
-            log(f"ERROR: {exc}")
-            write_result(False,
-                         f"Could not switch to drive {hd_drive}: "
-                         f"(hard disk not accessible)")
-            return False
-        time.sleep(0.3)
-        term._drain()
-
+        # After booting from IDE0, A: is the hard disk with midisynth.
         log("Launching midisynth …")
         term.send("midisynth\r")
         try:

@@ -208,6 +208,40 @@ mkdir -p "$RESULTS_DIR/snapshots"
 TEST_IMAGE="$RESULTS_DIR/test_run.img"
 cp "$HD_IMAGE" "$TEST_IMAGE"
 info "Scratch image: $TEST_IMAGE"
+
+# ---------------------------------------------------------------------------
+# Step 3b: Install CP/M system tracks so the disk is bootable
+# ---------------------------------------------------------------------------
+# The cheese.img built by build_docker.sh only has the CP/M data area
+# (user files).  The system tracks (first 131072 bytes) are filled with
+# 0xE5 and contain no boot code.  We overlay the system tracks from
+# a pre-built RomWBW hd512 CP/M 2.2 image.
+SYSTRACKS_FILE=""
+# Search MAME rompaths for the cached system tracks
+MAME_ROMPATH_RAW=$("$MAME_CMD" -showconfig 2>/dev/null | awk -F'[ \t]+' '/^rompath/{print $2}' | cut -d';' -f1 || true)
+MAME_ROMPATH="${MAME_ROMPATH_RAW/\$HOME/$HOME}"
+MAME_ROMPATH="${MAME_ROMPATH/\~/$HOME}"
+for candidate in \
+    "$MAME_ROMPATH/rc2014zedp/hd512_cpm22_systracks.bin" \
+    "$HOME/mame/roms/rc2014zedp/hd512_cpm22_systracks.bin" \
+    "$SCRIPT_DIR/hd512_cpm22_systracks.bin"
+do
+    if [[ -f "$candidate" ]]; then
+        SYSTRACKS_FILE="$candidate"
+        break
+    fi
+done
+
+if [[ -n "$SYSTRACKS_FILE" ]]; then
+    info "Installing CP/M system tracks from: $SYSTRACKS_FILE"
+    # Overlay the first 131072 bytes (system tracks) onto the scratch image.
+    # dd conv=notrunc writes without truncating the rest of the file.
+    dd if="$SYSTRACKS_FILE" of="$TEST_IMAGE" bs=512 count=256 conv=notrunc 2>/dev/null
+    pass "System tracks installed — disk is bootable"
+else
+    warn "CP/M system tracks not found — disk may not be bootable."
+    warn "Run ./tests/e2e/setup_e2e.sh to extract them from the RomWBW package."
+fi
 echo ""
 
 # ---------------------------------------------------------------------------
