@@ -368,13 +368,18 @@ def run_tests() -> bool:
             return False
 
         # RomWBW lists disks and waits for input.  The CF/IDE hard disk
-        # with our CP/M image is typically Disk 2 (IDE0).  Send "2\n" to
-        # boot from it.  If the disk numbering ever changes, this value
-        # can be overridden via the BOOT_DISK env var.
+        # with our CP/M image is typically Disk 2 (IDE0).  The boot
+        # loader is a single-key interface — just send the disk number
+        # character (no CR needed).  If the disk numbering ever changes,
+        # this value can be overridden via the BOOT_DISK env var.
         boot_disk = os.environ.get("BOOT_DISK", "2")
         log(f"Selecting boot disk {boot_disk} …")
-        time.sleep(0.3)
-        term.send(boot_disk + "\n")
+        time.sleep(0.5)
+        # Send just the disk number; RomWBW boot loader reads one char.
+        term.send(boot_disk)
+        time.sleep(0.5)
+        # Some RomWBW versions need CR to confirm, send it as well.
+        term.send("\r")
 
         # ------------------------------------------------------------------
         # 3. Wait for CP/M A> prompt

@@ -6,8 +6,10 @@
 #
 # What it does:
 #   1. Downloads RomWBW ROM images into MAME's rompath so the rc2014zedp
-#      driver can boot.  The official RomWBW 3.0.1 RC2014-Z80 standard ROM
-#      is used by default; set ROMWBW_VERSION to override.
+#      driver can boot.  RomWBW 3.5.1 (latest stable) is downloaded by
+#      default and installed under the 3.0.1 MAME ROM name.  MAME will
+#      warn about a CRC mismatch but boots normally.  Set ROMWBW_VERSION
+#      to override.
 #
 #   2. Installs the wbw_hd512 CP/M disk format definition into cpmtools so
 #      cpmls/cpmcp can read RomWBW hard-disk images.  Writes to
@@ -21,7 +23,7 @@
 #
 # Usage:
 #   ./tests/e2e/setup_e2e.sh
-#   ROMWBW_VERSION=3.0.0 ./tests/e2e/setup_e2e.sh   # use a different version
+#   ROMWBW_VERSION=3.4.1 ./tests/e2e/setup_e2e.sh   # use a different version
 
 set -euo pipefail
 
@@ -30,29 +32,45 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 # RomWBW release version to download.
+# MAME 0.264 ships with ROM definitions for versions up to 3.0.1, but
+# the exact release no longer needs to be present on GitHub — any
+# version's RCZ80_std.rom will boot (MAME only warns about a CRC
+# mismatch when the ROM does not match the built-in hash).
+#
 # Supported versions and the MAME ROM names they produce:
-#   3.0.1  →  rcz80_std_3_0_1.rom  (default, matches MAME 0.264)
+#   3.5.1  →  rcz80_std_3_0_1.rom  (latest stable, CRC won't match but boots)
+#   3.0.1  →  rcz80_std_3_0_1.rom  (matches MAME 0.264 CRC, release removed)
 #   3.0.0  →  rcz80_std_3_0_0.rom
 #   2.9.1  →  rcz80_std_2_9_1.rom
 #   2.9.0  →  rc_std_2_9_0.rom
-ROMWBW_VERSION="${ROMWBW_VERSION:-3.0.1}"
+ROMWBW_VERSION="${ROMWBW_VERSION:-3.5.1}"
+
+# The MAME BIOS slot we target.  Even when downloading a newer RomWBW
+# release the ROM file is installed under the 3.0.1 name so that MAME
+# finds it without extra -bios flags.
+MAME_BIOS_VERSION="${MAME_BIOS_VERSION:-3.0.1}"
 
 # RomWBW GitHub release package URL.
-ROMWBW_PKG_URL="https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-${ROMWBW_VERSION}-Package.zip"
+# Releases ≥ 3.4.0 use a "v" prefix in the asset filename;
+# older releases do not.  Try both patterns.
+ROMWBW_PKG_URL_V="https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-v${ROMWBW_VERSION}-Package.zip"
+ROMWBW_PKG_URL_PLAIN="https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-${ROMWBW_VERSION}-Package.zip"
 
 # Name of the RC2014 Z80 standard ROM inside the RomWBW package (Binary/).
 ROM_IN_PKG="RCZ80_std.rom"
 
 # MAME ROM filename (as listed in MAME's rc2014_rom_ram_512k device XML).
-MAME_ROM_NAME="rcz80_std_$(echo "$ROMWBW_VERSION" | tr '.' '_').rom"
+MAME_ROM_NAME="rcz80_std_$(echo "$MAME_BIOS_VERSION" | tr '.' '_').rom"
 
 # Special case: 2.9.0 uses a different prefix (rc_ not rcz80_)
-if [[ "$ROMWBW_VERSION" == "2.9.0" ]]; then
+if [[ "$MAME_BIOS_VERSION" == "2.9.0" ]]; then
     MAME_ROM_NAME="rc_std_2_9_0.rom"
     ROM_IN_PKG="RC_std.rom"
 fi
 
 # CRC32 values from MAME's XML, used to verify the downloaded ROM.
+# When the downloaded version differs from MAME_BIOS_VERSION the CRC
+# will not match — this is expected and MAME still boots (with a warning).
 declare -A KNOWN_CRCS=(
     [rcz80_std_3_0_1.rom]="6d6b60c5"
     [rcz80_std_3_0_0.rom]="15b802f8"
@@ -134,7 +152,6 @@ else
         ln -sf "$FOUND_ROM" "$ROM_DEST"
     else
         info "  Downloading RomWBW $ROMWBW_VERSION package..."
-        info "  URL: $ROMWBW_PKG_URL"
 
         require_cmd() {
             command -v "$1" &>/dev/null || fail "'$1' not found — $2"
@@ -146,10 +163,18 @@ else
         trap 'rm -rf "$TMPDIR_DL"' EXIT
 
         PKG_ZIP="$TMPDIR_DL/romwbw.zip"
-        curl -fsSL --retry 3 --retry-delay 2 \
-            -o "$PKG_ZIP" \
-            "$ROMWBW_PKG_URL" \
-            || fail "Download failed — check your internet connection or try a different ROMWBW_VERSION"
+        # Try both URL patterns (with and without 'v' prefix in the asset name).
+        DOWNLOADED=false
+        for url in "$ROMWBW_PKG_URL_V" "$ROMWBW_PKG_URL_PLAIN"; do
+            info "  Trying: $url"
+            if curl -fsSL --retry 3 --retry-delay 2 -o "$PKG_ZIP" "$url" 2>/dev/null; then
+                DOWNLOADED=true
+                break
+            fi
+        done
+        if [[ "$DOWNLOADED" != true ]]; then
+            fail "Download failed — check your internet connection or try a different ROMWBW_VERSION"
+        fi
 
         # List zip contents for diagnosis, then find the ROM.
         ROM_PATH_IN_ZIP=$(unzip -Z1 "$PKG_ZIP" | grep -i "Binary/${ROM_IN_PKG}$" | head -1 || true)
@@ -170,9 +195,16 @@ else
         if [[ -n "$EXPECTED_CRC" ]] && command -v crc32 &>/dev/null; then
             ACTUAL_CRC=$(crc32 "$TMPDIR_DL/$MAME_ROM_NAME" 2>/dev/null || true)
             if [[ -n "$ACTUAL_CRC" && "${ACTUAL_CRC,,}" != "${EXPECTED_CRC,,}" ]]; then
-                fail "CRC32 mismatch for $MAME_ROM_NAME: expected $EXPECTED_CRC, got $ACTUAL_CRC"
+                if [[ "$ROMWBW_VERSION" != "$MAME_BIOS_VERSION" ]]; then
+                    info "  CRC32 mismatch (expected $EXPECTED_CRC, got $ACTUAL_CRC)"
+                    info "  This is expected when ROMWBW_VERSION ($ROMWBW_VERSION) differs from MAME_BIOS_VERSION ($MAME_BIOS_VERSION)"
+                    info "  MAME will warn about the CRC but the ROM still boots."
+                else
+                    fail "CRC32 mismatch for $MAME_ROM_NAME: expected $EXPECTED_CRC, got $ACTUAL_CRC"
+                fi
+            else
+                info "  CRC32 OK: $ACTUAL_CRC"
             fi
-            info "  CRC32 OK: $ACTUAL_CRC"
         fi
 
         mkdir -p "$ROM_DIR"
