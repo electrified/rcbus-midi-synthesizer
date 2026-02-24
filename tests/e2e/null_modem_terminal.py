@@ -18,6 +18,7 @@
 #   SERIAL_HOST     TCP host to connect to (default: localhost)
 #   SERIAL_PORT     TCP port exposed by MAME's -bitb flag (required)
 #   RESULTS_DIR     Directory for test_result.txt and done flag (default: tests/e2e/results)
+#   MAME_PID        PID of the MAME process (optional, for liveness checks)
 #   CONNECT_TIMEOUT Seconds to retry connecting to the socket (default: 60)
 #   BOOT_TIMEOUT    Seconds to wait for CP/M A> after boot (default: 120)
 #   CMD_TIMEOUT     Seconds allowed per command (default: 30)
@@ -31,8 +32,10 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import pathlib
+import signal
 import socket
 import sys
 import time
@@ -45,6 +48,7 @@ import traceback
 HOST            = os.environ.get("SERIAL_HOST",     "localhost")
 PORT            = int(os.environ.get("SERIAL_PORT",  "12345"))
 RESULTS_DIR     = pathlib.Path(os.environ.get("RESULTS_DIR", "tests/e2e/results"))
+MAME_PID        = int(os.environ.get("MAME_PID", "0")) or None
 CONNECT_TIMEOUT = int(os.environ.get("CONNECT_TIMEOUT", "60"))
 BOOT_TIMEOUT    = int(os.environ.get("BOOT_TIMEOUT",   "120"))
 CMD_TIMEOUT     = int(os.environ.get("CMD_TIMEOUT",     "30"))
@@ -52,6 +56,15 @@ AUDIO_TIMEOUT   = int(os.environ.get("AUDIO_TIMEOUT",   "60"))
 
 RESULT_FILE = RESULTS_DIR / "test_result.txt"
 DONE_FLAG   = RESULTS_DIR / "mame_done.flag"
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class ConnectionLostError(Exception):
+    """Raised when the MAME socket connection is lost unexpectedly."""
+
 
 # ---------------------------------------------------------------------------
 # Logging / result tracking
@@ -92,9 +105,23 @@ def write_result(passed: bool, detail: str = "") -> None:
 
 def signal_mame_exit() -> None:
     """Touch the done-flag file so the Lua watchdog exits MAME cleanly."""
-    DONE_FLAG.parent.mkdir(parents=True, exist_ok=True)
-    DONE_FLAG.touch()
-    log(f"Done flag written: {DONE_FLAG}")
+    try:
+        DONE_FLAG.parent.mkdir(parents=True, exist_ok=True)
+        DONE_FLAG.touch()
+        log(f"Done flag written: {DONE_FLAG}")
+    except OSError as exc:
+        log(f"WARNING: could not write done flag: {exc}")
+
+
+def is_mame_alive() -> bool:
+    """Check whether the MAME process is still running (if PID is known)."""
+    if MAME_PID is None:
+        return True  # Assume alive if we don't have a PID
+    try:
+        os.kill(MAME_PID, 0)
+        return True
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +136,7 @@ class NullModemTerminal:
         self.port = port
         self._sock: socket.socket | None = None
         self._buf = ""          # accumulated received text (unconsumed)
+        self._connected = False
 
     # ------------------------------------------------------------------
     # Connection
@@ -118,11 +146,19 @@ class NullModemTerminal:
         """Retry connecting to the MAME socket until timeout.
 
         MAME takes a few seconds to start, so we poll.
+        Returns False if connection could not be established.
         """
         deadline = time.monotonic() + timeout
         attempt = 0
+        last_error = ""
         while time.monotonic() < deadline:
             attempt += 1
+
+            # Check if MAME died before we even connected
+            if not is_mame_alive():
+                log(f"ERROR: MAME process (PID {MAME_PID}) is no longer running")
+                return False
+
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(2.0)
@@ -130,25 +166,36 @@ class NullModemTerminal:
                 # Switch to short non-blocking reads so we can poll
                 sock.settimeout(0.2)
                 self._sock = sock
+                self._connected = True
                 log(f"Connected to {self.host}:{self.port} (attempt {attempt})")
                 return True
-            except (ConnectionRefusedError, OSError):
+            except (ConnectionRefusedError, OSError) as exc:
+                last_error = str(exc)
+                try:
+                    sock.close()
+                except OSError:
+                    pass
                 if attempt % 20 == 0:
                     remaining = deadline - time.monotonic()
                     log(f"  Still waiting for MAME socket … "
                         f"attempt {attempt}, {remaining:.0f}s left")
-                time.sleep(0.3)
+                time.sleep(0.5)
         log(f"ERROR: could not connect to {self.host}:{self.port} "
-            f"after {timeout}s ({attempt} attempts)")
+            f"after {timeout}s ({attempt} attempts): {last_error}")
         return False
 
     def close(self) -> None:
+        self._connected = False
         if self._sock:
             try:
                 self._sock.close()
             except OSError:
                 pass
             self._sock = None
+
+    @property
+    def connected(self) -> bool:
+        return self._connected and self._sock is not None
 
     # ------------------------------------------------------------------
     # I/O
@@ -158,16 +205,37 @@ class NullModemTerminal:
         """Read all bytes currently available on the socket into _buf.
 
         Returns the newly received text (may be empty).
+        Raises ConnectionLostError if the socket is closed or broken.
         """
+        if not self.connected:
+            raise ConnectionLostError("not connected")
+
         received = b""
         while True:
             try:
                 chunk = self._sock.recv(4096)
                 if not chunk:
-                    break
+                    # Peer closed the connection
+                    self._connected = False
+                    if received:
+                        break  # Process what we got, then report error next call
+                    raise ConnectionLostError(
+                        "MAME closed the null-modem socket (recv returned empty)")
                 received += chunk
             except socket.timeout:
                 break
+            except ConnectionResetError:
+                self._connected = False
+                raise ConnectionLostError("connection reset by MAME")
+            except BrokenPipeError:
+                self._connected = False
+                raise ConnectionLostError("broken pipe to MAME")
+            except OSError as exc:
+                if exc.errno == errno.ECONNRESET:
+                    self._connected = False
+                    raise ConnectionLostError("connection reset by MAME") from exc
+                raise
+
         if received:
             # Normalise line endings from the emulated serial port
             text = received.decode("utf-8", errors="replace")
@@ -184,8 +252,10 @@ class NullModemTerminal:
         Returns everything accumulated in _buf up to and including the marker,
         then removes that prefix from _buf.
         Raises TimeoutError if the marker is not seen within *timeout* seconds.
+        Raises ConnectionLostError if the connection drops.
         """
         deadline = time.monotonic() + timeout
+        last_log = time.monotonic()
         while time.monotonic() < deadline:
             self._drain()
             idx = self._buf.find(marker)
@@ -194,28 +264,60 @@ class NullModemTerminal:
                 captured = self._buf[:end]
                 self._buf = self._buf[end:]
                 return captured
+
+            # Periodic liveness check and progress logging
+            now = time.monotonic()
+            if now - last_log > 10.0:
+                remaining = deadline - now
+                buf_tail = self._buf[-80:] if self._buf else "(empty)"
+                log(f"  … still waiting for {marker!r} "
+                    f"({remaining:.0f}s left, buf tail: {buf_tail!r})")
+                last_log = now
+
+                # Check if MAME is still alive
+                if not is_mame_alive():
+                    raise ConnectionLostError(
+                        f"MAME process died while waiting for {marker!r}")
+
             time.sleep(0.05)
+
         raise TimeoutError(
             f"Timeout ({timeout}s) waiting for {marker!r}; "
+            f"buffer length={len(self._buf)}, "
             f"last buffer tail: {self._buf[-200:]!r}"
         )
 
     def send(self, text: str) -> None:
-        """Send *text* as bytes over the socket."""
-        self._sock.sendall(text.encode("utf-8"))
+        """Send *text* as bytes over the socket.
+
+        Raises ConnectionLostError if the socket is broken.
+        """
+        if not self.connected:
+            raise ConnectionLostError("not connected")
+        try:
+            self._sock.sendall(text.encode("utf-8"))
+        except (BrokenPipeError, ConnectionResetError) as exc:
+            self._connected = False
+            raise ConnectionLostError(f"send failed: {exc}") from exc
+        except OSError as exc:
+            if exc.errno in (errno.ECONNRESET, errno.EPIPE):
+                self._connected = False
+                raise ConnectionLostError(f"send failed: {exc}") from exc
+            raise
 
     def send_cmd(self, char: str, wait_for: str | None = None,
                  timeout: int = 30) -> str:
         """Send a single-character midisynth command and optionally wait for a marker.
 
         midisynth processes commands as single key-presses (no Enter needed).
+        Returns the captured output up to the marker, or the current buffer contents.
         """
         log(f"  > sending {char!r}")
         self.send(char)
         if wait_for:
             return self.wait_for(wait_for, timeout=timeout)
         # Give the program a moment to respond then drain whatever arrived
-        time.sleep(0.3)
+        time.sleep(0.5)
         self._drain()
         return self._buf
 
@@ -248,6 +350,10 @@ def run_tests() -> bool:
             write_result(False, "CP/M did not boot (no A> prompt seen)")
             return False
 
+        # Small pause after boot to let CP/M settle
+        time.sleep(0.5)
+        term._drain()
+
         # ------------------------------------------------------------------
         # 3. Launch midisynth
         # ------------------------------------------------------------------
@@ -269,6 +375,10 @@ def run_tests() -> bool:
             "Ready." in launch_out,
             "midisynth ready prompt present",
         )
+
+        # Small pause to let the synthesizer fully initialise
+        time.sleep(0.3)
+        term._drain()
 
         # ------------------------------------------------------------------
         # 4. h — help
@@ -327,12 +437,18 @@ def run_tests() -> bool:
         term.send_cmd("q", timeout=CMD_TIMEOUT)
         try:
             quit_out = term.wait_for("A>", timeout=CMD_TIMEOUT)
-            check("Exiting synthesizer" in quit_out or True,
-                  "quit: returned to CP/M A> prompt")
+            check(True, "quit: returned to CP/M A> prompt")
         except TimeoutError:
-            log("WARNING: did not see A> after quit (program may have exited cleanly anyway)")
+            log("WARNING: did not see A> after quit "
+                "(program may have exited cleanly anyway)")
 
         term.close()
+
+    except ConnectionLostError as exc:
+        log(f"ERROR: connection lost — {exc}")
+        term.close()
+        write_result(False, f"connection lost: {exc}")
+        return False
 
     except Exception as exc:
         log(f"ERROR: unexpected exception — {exc}")
@@ -357,8 +473,17 @@ def run_tests() -> bool:
 if __name__ == "__main__":
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     log(f"null_modem_terminal starting  host={HOST}  port={PORT}")
+    log(f"MAME PID: {MAME_PID or 'unknown'}")
     log(f"timeouts: connect={CONNECT_TIMEOUT}s  boot={BOOT_TIMEOUT}s  "
         f"cmd={CMD_TIMEOUT}s  audio={AUDIO_TIMEOUT}s")
+
+    # Handle SIGTERM gracefully so cleanup runs
+    def _sigterm_handler(signum, frame):
+        log("Received SIGTERM — shutting down")
+        signal_mame_exit()
+        sys.exit(1)
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
 
     success = run_tests()
     sys.exit(0 if success else 1)

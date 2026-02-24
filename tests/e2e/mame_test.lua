@@ -28,9 +28,13 @@ local RESULTS_DIR = "tests/e2e/results"
 local DONE_FLAG   = RESULTS_DIR .. "/mame_done.flag"
 
 -- Safety cutoff: exit after this many emulated frames regardless.
--- 72000 frames @ ~60 fps ≈ 20 minutes of emulated time.  With -nothrottle
--- this is far longer than any real test run.
-local MAX_FRAMES = 72000
+-- 36000 frames @ ~60 fps ≈ 10 minutes of emulated time.  With -nothrottle
+-- this is far longer than any real test run but short enough to avoid wasting
+-- CI time if something goes wrong.
+local MAX_FRAMES = 36000
+
+-- How often (in frames) to log a heartbeat so CI knows we're alive.
+local HEARTBEAT_INTERVAL = 1800  -- ~30 seconds of emulated time
 
 -- ---------------------------------------------------------------------------
 -- Initialise
@@ -66,11 +70,20 @@ emu.register_frame_done(function()
         end
     end
 
+    -- Periodic heartbeat so CI logs show we're still alive
+    if frame_count % HEARTBEAT_INTERVAL == 0 then
+        local elapsed_sec = frame_count / 60
+        local remaining_sec = (MAX_FRAMES - frame_count) / 60
+        print(string.format(
+            "[mame_test] heartbeat: frame %d (%.0fs elapsed, %.0fs until cutoff)",
+            frame_count, elapsed_sec, remaining_sec))
+    end
+
     -- Safety cutoff
     if frame_count >= MAX_FRAMES then
         print(string.format(
-            "[mame_test] Safety timeout reached (%d frames) — forcing exit",
-            MAX_FRAMES))
+            "[mame_test] Safety timeout reached (%d frames / %.0fs) — forcing exit",
+            MAX_FRAMES, MAX_FRAMES / 60))
         manager.machine:exit()
     end
 end)
