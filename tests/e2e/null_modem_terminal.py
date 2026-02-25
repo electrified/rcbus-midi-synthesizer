@@ -83,6 +83,18 @@ def _open_serial_log() -> None:
     _serial_log_fh = open(SERIAL_LOG, "w")
 
 
+def _serial_log_raw(data: bytes) -> None:
+    """Log raw hex bytes for any chunk that contains non-ASCII data."""
+    if _serial_log_fh is None:
+        return
+    if not any(b > 0x7E or (b < 0x20 and b not in (0x09, 0x0A, 0x0D)) for b in data):
+        return  # All printable ASCII + common whitespace, skip hex dump
+    ts = time.strftime("%H:%M:%S")
+    hex_str = data.hex(" ")
+    _serial_log_fh.write(f"[{ts}] RX_HEX ({len(data)} bytes) {hex_str}\n")
+    _serial_log_fh.flush()
+
+
 def _serial_log(direction: str, data: str) -> None:
     """Append a timestamped TX/RX entry to the serial I/O log."""
     if _serial_log_fh is None:
@@ -269,6 +281,8 @@ class NullModemTerminal:
                 raise
 
         if received:
+            # Log raw hex for any non-ASCII bytes (diagnostic)
+            _serial_log_raw(received)
             # Normalise line endings from the emulated serial port
             text = received.decode("utf-8", errors="replace")
             text = text.replace("\r\n", "\n").replace("\r", "\n")
