@@ -323,11 +323,13 @@ if [[ "$HEADLESS" == true ]]; then
     export SDL_VIDEODRIVER=dummy
     export SDL_AUDIODRIVER=dummy
     # With null-modem the emulated system has no screen, so -video none is fine.
-    # Use -sound none to avoid SDL audio init issues in headless environments.
-    # The -wavwrite flag still records audio regardless of -sound setting.
-    MAME_ARGS+=(-video none -sound none)
+    # We keep the sound backend active (SDL with dummy driver) so that MAME's
+    # internal audio mixer runs and -wavwrite actually captures YM2149 output.
+    # Using -sound none would disable the audio pipeline entirely, resulting in
+    # a silent WAV file.
+    MAME_ARGS+=(-video none)
     info "Video       : none (headless, SDL_VIDEODRIVER=dummy)"
-    info "Audio       : none (headless, SDL_AUDIODRIVER=dummy) → $AUDIO_FILE via -wavwrite"
+    info "Audio       : SDL dummy driver → $AUDIO_FILE via -wavwrite"
 else
     # Even in windowed mode MAME will show "No screens attached" — that is
     # expected when null-modem replaces the built-in terminal.
