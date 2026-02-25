@@ -54,8 +54,9 @@ BOOT_TIMEOUT    = int(os.environ.get("BOOT_TIMEOUT",   "120"))
 CMD_TIMEOUT     = int(os.environ.get("CMD_TIMEOUT",     "30"))
 AUDIO_TIMEOUT   = int(os.environ.get("AUDIO_TIMEOUT",   "60"))
 
-RESULT_FILE = RESULTS_DIR / "test_result.txt"
-DONE_FLAG   = RESULTS_DIR / "mame_done.flag"
+RESULT_FILE  = RESULTS_DIR / "test_result.txt"
+SERIAL_LOG   = RESULTS_DIR / "serial_io.log"
+DONE_FLAG    = RESULTS_DIR / "mame_done.flag"
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -72,6 +73,24 @@ class ConnectionLostError(Exception):
 
 _log_lines: list[str] = []
 _assertions_failed = 0
+_serial_log_fh = None
+
+
+def _open_serial_log() -> None:
+    """Open the serial I/O log file for writing."""
+    global _serial_log_fh
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    _serial_log_fh = open(SERIAL_LOG, "w")
+
+
+def _serial_log(direction: str, data: str) -> None:
+    """Append a timestamped TX/RX entry to the serial I/O log."""
+    if _serial_log_fh is None:
+        return
+    ts = time.strftime("%H:%M:%S")
+    for line in data.splitlines(keepends=True):
+        _serial_log_fh.write(f"[{ts}] {direction} {line!r}\n")
+    _serial_log_fh.flush()
 
 
 def log(msg: str) -> None:
@@ -254,6 +273,8 @@ class NullModemTerminal:
             text = received.decode("utf-8", errors="replace")
             text = text.replace("\r\n", "\n").replace("\r", "\n")
             self._buf += text
+            # Log to serial I/O log
+            _serial_log("RX", text)
             # Echo to stdout so CI logs show real CP/M output
             print(text, end="", flush=True)
             return text
@@ -307,6 +328,7 @@ class NullModemTerminal:
         """
         if not self.connected:
             raise ConnectionLostError("not connected")
+        _serial_log("TX", text)
         try:
             self._sock.sendall(text.encode("utf-8"))
         except (BrokenPipeError, ConnectionResetError) as exc:
@@ -549,6 +571,7 @@ def run_tests() -> bool:
 
 if __name__ == "__main__":
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    _open_serial_log()
     log(f"null_modem_terminal starting  host={HOST}  port={PORT}")
     log(f"MAME PID: {MAME_PID or 'unknown'}")
     log(f"timeouts: connect={CONNECT_TIMEOUT}s  boot={BOOT_TIMEOUT}s  "

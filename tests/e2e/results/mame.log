@@ -8,5 +8,5 @@ WARNING: the machine might not run correctly.
 [mame_test] Waiting for done flag: tests/e2e/results/mame_done.flag
 [mame_test] Safety cutoff: 36000 frames
 [mame_test] heartbeat: frame 1800 (30s elapsed, 570s until cutoff)
-[mame_test] Done flag found at frame 2160 — exiting MAME
-Average speed: 30.07% (35 seconds)
+[mame_test] Done flag found at frame 2340 — exiting MAME
+Average speed: 46.82% (38 seconds)
