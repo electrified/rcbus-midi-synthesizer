@@ -1,9 +1,9 @@
-[null_modem] null_modem_terminal starting  host=127.0.0.1  port=26068
+[null_modem] null_modem_terminal starting  host=127.0.0.1  port=22498
 [null_modem] MAME PID: unknown
 [null_modem] timeouts: connect=90s  boot=120s  cmd=30s  audio=15s
-[null_modem] Connecting to MAME null-modem socket at 127.0.0.1:26068 …
-[null_modem] Listening on 127.0.0.1:26068 (waiting for MAME to connect)
-[null_modem] MAME connected from 127.0.0.1:58211
+[null_modem] Connecting to MAME null-modem socket at 127.0.0.1:22498 …
+[null_modem] Listening on 127.0.0.1:22498 (waiting for MAME to connect)
+[null_modem] MAME connected from 127.0.0.1:23528
 [null_modem] Waiting for RomWBW boot loader (up to 120s) …
 [null_modem] RomWBW boot loader reached
 [null_modem] PASS  boot: RomWBW HBIOS banner present

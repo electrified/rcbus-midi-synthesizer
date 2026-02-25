@@ -520,8 +520,11 @@ else
     fi
 fi
 
+SERIAL_LOG_FILE="$RESULTS_DIR/serial_io.log"
+
 echo ""
-info "Audio     : $AUDIO_FILE"
-info "Snapshots : $RESULTS_DIR/snapshots/"
-info "MAME log  : $LOG_FILE"
+info "Audio      : $AUDIO_FILE"
+info "Serial log : $SERIAL_LOG_FILE"
+info "Snapshots  : $RESULTS_DIR/snapshots/"
+info "MAME log   : $LOG_FILE"
 echo "==================================="
