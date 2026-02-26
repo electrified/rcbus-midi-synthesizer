@@ -75,13 +75,18 @@ static void SmallDelay(void) {
 
 // Low-level register write function
 void ym2149_write_register(uint8_t reg, uint8_t data) {
+#ifndef NO_HW_IO
     // Write address register first
     outp(YM2149_ADDR_PORT, reg);
     SmallDelay();
-    
+
     // Then write data register
     outp(YM2149_DATA_PORT, data);
     SmallDelay();
+#else
+    (void)reg;
+    (void)data;
+#endif
 }
 
 // Initialize YM2149 chip
@@ -346,9 +351,14 @@ uint16_t ym2149_apply_pitch_bend(uint16_t base_freq, int16_t bend) {
 
 // Read from YM2149 register (for detection)
 static uint8_t ym2149_read_register(uint8_t reg) {
+#ifndef NO_HW_IO
     outp(YM2149_ADDR_PORT, reg);
     SmallDelay();
     return inp(YM2149_DATA_PORT);
+#else
+    (void)reg;
+    return 0x00;
+#endif
 }
 
 // Detect YM2149 chip presence
@@ -375,7 +385,9 @@ uint8_t detect_ym2149(void) {
     uint8_t orig_level_b = 0;
     
     // Try to read original states (may fail if no chip present)
+#ifndef NO_HW_IO
     __asm__("di");  // Disable interrupts during detection
+#endif
     orig_mixer = ym2149_read_register(YM2149_MIXER);
     orig_level_a = ym2149_read_register(YM2149_LEVEL_A);
     orig_level_b = ym2149_read_register(YM2149_LEVEL_B);
@@ -424,7 +436,9 @@ uint8_t detect_ym2149(void) {
     ym2149_write_register(YM2149_LEVEL_A, orig_level_a);
     ym2149_write_register(YM2149_LEVEL_B, orig_level_b);
     
+#ifndef NO_HW_IO
     __asm__("ei");  // Re-enable interrupts
+#endif
     
     return detection_passed;
 }
