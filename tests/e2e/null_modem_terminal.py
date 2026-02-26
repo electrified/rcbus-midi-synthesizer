@@ -283,6 +283,12 @@ class NullModemTerminal:
         if received:
             # Log raw hex for any non-ASCII bytes (diagnostic)
             _serial_log_raw(received)
+            # Strip 0xFF bytes — MAME's null-modem emulation sends these
+            # as idle-line filler when running with -nothrottle.  They are
+            # not real program output.
+            received = received.replace(b"\xff", b"")
+            if not received:
+                return ""
             # Normalise line endings from the emulated serial port
             text = received.decode("utf-8", errors="replace")
             text = text.replace("\r\n", "\n").replace("\r", "\n")
