@@ -1,0 +1,49 @@
+name: Build MIDI Synthesizer
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      no_hw_io:
+        description: "Disable hardware I/O (set to 1 for testing)"
+        required: false
+        default: "0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with z88dk Docker
+        run: |
+          NO_HW_IO="${{ github.event.inputs.no_hw_io || '0' }}" \
+            ./build_docker.sh
+        env:
+          HD_IMAGE: ""  # skip cpmcp — no disk image needed in CI
+
+      - name: Upload MIDISYNTH.COM
+        uses: actions/upload-artifact@v4
+        with:
+          name: midisynth-com
+          path: MIDISYNTH.COM
+
+  build-no-hw-io:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with hardware I/O disabled
+        run: |
+          NO_HW_IO=1 ./build_docker.sh
+        env:
+          HD_IMAGE: ""
+
+      - name: Upload MIDISYNTH.COM (no-hw-io)
+        uses: actions/upload-artifact@v4
+        with:
+          name: midisynth-com-no-hw-io
+          path: MIDISYNTH.COM

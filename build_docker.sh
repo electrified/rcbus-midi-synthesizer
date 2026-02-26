@@ -13,9 +13,15 @@ HD_IMAGE="${HD_IMAGE:-cheese.img}"
 build_synth() {
     echo "=== Building MIDI Synthesizer ==="
 
+    local extra_cflags=""
+    if [ "${NO_HW_IO:-}" = "1" ]; then
+        echo "(NO_HW_IO=1: hardware I/O calls disabled)"
+        extra_cflags="-DNO_HW_IO"
+    fi
+
     docker run --rm -v "$(pwd):/workspace" -w /workspace z88dk/z88dk:latest \
         zcc +cpm -v -SO3 -O3 --opt-code-size \
-        -Iinclude \
+        -Iinclude $extra_cflags \
         src/main.c src/core/synthesizer.c src/core/chip_manager.c src/midi/midi_driver.c src/chips/ym2149.c \
         -create-app -o midisynth
 
