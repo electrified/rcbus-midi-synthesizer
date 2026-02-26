@@ -8,7 +8,7 @@
 
 set -e
 
-HD_IMAGE="${HD_IMAGE:-cheese.img}"
+HD_IMAGE="${HD_IMAGE-cheese.img}"
 
 build_synth() {
     echo "=== Building MIDI Synthesizer ==="
