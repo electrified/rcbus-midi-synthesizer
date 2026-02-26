@@ -80,14 +80,14 @@ void synthesizer_print_status(void) {
     // Show detected hardware
     printf("Hardware Detection:\n");
     if (available_chips & CHIP_YM2149) {
-        printf("  ✓ YM2149 PSG detected\n");
+        printf("  [Y] YM2149 PSG detected\n");
     } else {
-        printf("  ✗ YM2149 PSG not detected\n");
+        printf("  [ ] YM2149 PSG not detected\n");
     }
     if (available_chips & CHIP_OPL3) {
-        printf("  ✓ OPL3 FM detected\n");
+        printf("  [Y] OPL3 FM detected\n");
     } else {
-        printf("  ✗ OPL3 FM not detected\n");
+        printf("  [ ] OPL3 FM not detected\n");
     }
     printf("\n");
     
