@@ -28,11 +28,11 @@ WBW_HD512_SIZE=8519680
 # ---------------------------------------------------------------------------
 if ! command -v zcc &>/dev/null; then
     echo "zcc not found on PATH — running inside Docker ($BUILD_IMAGE)"
-    # Fall back to the upstream z88dk image if custom image is not available
+    # Require the custom image — it contains z88dk built from source
     if ! docker image inspect "$BUILD_IMAGE" &>/dev/null; then
-        echo "Image $BUILD_IMAGE not found, falling back to z88dk/z88dk:latest"
-        echo "(Build the full image with: docker build -t $BUILD_IMAGE .)"
-        BUILD_IMAGE="z88dk/z88dk:latest"
+        echo "Image $BUILD_IMAGE not found."
+        echo "Build it first with: docker build -t $BUILD_IMAGE ."
+        exit 1
     fi
     exec docker run --rm \
         -v "$(pwd):/workspace" -w /workspace \

@@ -2,7 +2,7 @@
 #
 # Contains everything needed to compile, package, and E2E-test the
 # synthesizer:
-#   - z88dk   (Z80 C cross-compiler, copied from official Alpine image)
+#   - z88dk   (Z80 C cross-compiler, built from source)
 #   - cpmtools (CP/M disk image manipulation)
 #   - MAME    (RC2014 emulation for E2E tests)
 #   - sox     (audio analysis for E2E tests)
@@ -21,42 +21,29 @@
 #   docker run --rm -v $(pwd):/workspace rc2014-build \
 #     ./tests/e2e/run_e2e.sh --headless
 
-# ---------------------------------------------------------------------------
-# Stage 1: collect z88dk and its musl-linked runtime libraries
-# ---------------------------------------------------------------------------
-FROM z88dk/z88dk:latest AS z88dk
-
-# Identify shared libraries needed by z88dk binaries at runtime.
-# z88dk is compiled on Alpine (musl libc), so these are musl-linked .so files.
-# We collect them into /z88dk-libs for copying into the Ubuntu stage, where
-# they are installed to a separate directory to avoid conflicting with
-# Ubuntu's glibc libs.
-RUN mkdir -p /z88dk-libs && \
-    for bin in /opt/z88dk/bin/*; do \
-        [ -f "$bin" ] && [ -x "$bin" ] && ldd "$bin" 2>/dev/null || true; \
-    done \
-    | awk '/=>/ && !/ld-musl/ {print $3}' \
-    | sort -u \
-    | while read -r lib; do [ -f "$lib" ] && cp -L "$lib" /z88dk-libs/; done
-
-# ---------------------------------------------------------------------------
-# Stage 2: Ubuntu with all build + test tools
-# ---------------------------------------------------------------------------
 FROM ubuntu:24.04
 
 # Avoid interactive prompts during apt installs
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install build and test dependencies in a single layer
+# z88dk release to build
+ARG Z88DK_VERSION=v2.4
+
+# Install z88dk build dependencies and project runtime tools in a single layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        # musl dynamic linker — needed to run Alpine-compiled z88dk binaries
-        musl \
-        # z88dk uses the system preprocessor and m4
+        # z88dk build dependencies (per https://github.com/z88dk/z88dk/wiki/installation)
+        build-essential \
+        bison \
+        flex \
+        libxml2-dev \
+        libgmp-dev \
         m4 \
-        make \
+        dos2unix \
+        texinfo \
+        curl \
         # CP/M disk image tools
         cpmtools \
-        # MAME emulator (rc2014zedp driver)
+        # MAME emulator (RC2014 driver for E2E tests)
         mame \
         mame-tools \
         # Audio analysis
@@ -64,20 +51,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # E2E test harness
         python3 \
         # ROM download (used by setup_e2e.sh)
-        curl \
         unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy z88dk from the official image
-COPY --from=z88dk /opt/z88dk /opt/z88dk
-
-# Copy Alpine (musl-linked) shared libraries that z88dk binaries depend on.
-# These are placed in a separate directory to avoid conflicting with Ubuntu's
-# glibc-linked libraries of the same name (e.g. libxml2, libgmp).
-COPY --from=z88dk /z88dk-libs/ /usr/lib/z88dk-libs/
-
-# Tell musl's dynamic linker where to find the Alpine shared libraries
-RUN echo "/usr/lib/z88dk-libs" > /etc/ld-musl-x86_64.path
+# Build z88dk from source (without SDCC — sccz80 is sufficient for CP/M targets)
+RUN Z88DK_TARBALL="https://github.com/z88dk/z88dk/releases/download/${Z88DK_VERSION}/z88dk-src-${Z88DK_VERSION#v}.tgz" && \
+    curl -fSL "$Z88DK_TARBALL" -o /tmp/z88dk.tgz && \
+    tar -xzf /tmp/z88dk.tgz -C /tmp && \
+    cd /tmp/z88dk && \
+    export BUILD_SDCC=0 && \
+    export BUILD_SDCC_HTTP=0 && \
+    chmod +x build.sh && \
+    ./build.sh 2>&1 | tail -20 && \
+    mv /tmp/z88dk /opt/z88dk && \
+    rm -f /tmp/z88dk.tgz
 
 # z88dk environment
 ENV Z88DK_PATH="/opt/z88dk" \
@@ -101,7 +88,7 @@ diskdef wbw_hd512\n\
     os 2.2\n\
 end\n' >> /etc/cpmtools/diskdefs
 
-# Smoke-test: verify z88dk runs on Ubuntu with musl compat layer
+# Smoke-test: verify z88dk runs
 RUN zcc 2>&1 | head -1 && echo "z88dk OK"
 
 WORKDIR /workspace
