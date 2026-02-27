@@ -6,123 +6,40 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      no_hw_io:
-        description: "Disable hardware I/O (set to 1 for testing)"
-        required: false
-        default: "0"
-
-env:
-  BUILD_IMAGE: rc2014-build
 
 jobs:
-  build-image:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t $BUILD_IMAGE .
-
-      - name: Save Docker image as artifact
-        run: docker save $BUILD_IMAGE | gzip > /tmp/rc2014-build.tar.gz
-
-      - name: Upload Docker image
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-image
-          path: /tmp/rc2014-build.tar.gz
-          retention-days: 1
-
-  build:
-    runs-on: ubuntu-latest
-    needs: build-image
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download and load Docker image
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-          path: /tmp
-
-      - name: Load Docker image
-        run: gunzip -c /tmp/rc2014-build.tar.gz | docker load
+        run: docker build -t rc2014-build .
 
       - name: Build with z88dk
         run: |
-          NO_HW_IO="${{ github.event.inputs.no_hw_io || '0' }}" \
-          HD_IMAGE="" \
-          BUILD_IMAGE=$BUILD_IMAGE \
-            ./build_docker.sh
-
-      - name: Upload MIDISYNTH.COM
-        uses: actions/upload-artifact@v4
-        with:
-          name: midisynth-com
-          path: MIDISYNTH.COM
-
-  build-no-hw-io:
-    runs-on: ubuntu-latest
-    needs: build-image
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download and load Docker image
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-          path: /tmp
-
-      - name: Load Docker image
-        run: gunzip -c /tmp/rc2014-build.tar.gz | docker load
+          HD_IMAGE="" BUILD_IMAGE=rc2014-build ./build_docker.sh
+          cp MIDISYNTH.COM MIDISYNTH-normal.COM
 
       - name: Build with hardware I/O disabled
         run: |
-          NO_HW_IO=1 \
-          HD_IMAGE="" \
-          BUILD_IMAGE=$BUILD_IMAGE \
-            ./build_docker.sh
+          NO_HW_IO=1 HD_IMAGE="" BUILD_IMAGE=rc2014-build ./build_docker.sh
+          cp MIDISYNTH.COM MIDISYNTH-no-hw-io.COM
 
-      - name: Upload MIDISYNTH.COM (no-hw-io)
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: midisynth-com-no-hw-io
-          path: MIDISYNTH.COM
+          name: midisynth-builds
+          path: |
+            MIDISYNTH-normal.COM
+            MIDISYNTH-no-hw-io.COM
 
-  e2e-test:
-    runs-on: ubuntu-latest
-    needs: [build-image, build, build-no-hw-io]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - variant: normal
-            artifact: midisynth-com
-          - variant: no-hw-io
-            artifact: midisynth-com-no-hw-io
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download and load Docker image
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-          path: /tmp
-
-      - name: Load Docker image
-        run: gunzip -c /tmp/rc2014-build.tar.gz | docker load
-
-      - name: Download ${{ matrix.variant }} build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-
-      - name: Run E2E tests (${{ matrix.variant }})
+      - name: E2E test (normal build)
         run: |
+          cp MIDISYNTH-normal.COM MIDISYNTH.COM
           docker run --rm \
             -v "$(pwd):/workspace" -w /workspace \
-            $BUILD_IMAGE \
+            rc2014-build \
             bash -c '
               cp /opt/mame-roms/rc2014zedp/hd512_blank.img cheese.img &&
               cpmcp -f wbw_hd512 cheese.img MIDISYNTH.COM 0:midisyn.com &&
@@ -131,11 +48,37 @@ jobs:
             '
         timeout-minutes: 10
 
-      - name: Upload test results (${{ matrix.variant }})
+      - name: Upload test results (normal)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-test-results-${{ matrix.variant }}
+          name: e2e-test-results-normal
+          path: |
+            tests/e2e/results/test_result.txt
+            tests/e2e/results/serial_io.log
+            tests/e2e/results/mame.log
+            tests/e2e/results/audio.wav
+
+      - name: E2E test (no-hw-io build)
+        run: |
+          cp MIDISYNTH-no-hw-io.COM MIDISYNTH.COM
+          rm -rf tests/e2e/results
+          docker run --rm \
+            -v "$(pwd):/workspace" -w /workspace \
+            rc2014-build \
+            bash -c '
+              cp /opt/mame-roms/rc2014zedp/hd512_blank.img cheese.img &&
+              cpmcp -f wbw_hd512 cheese.img MIDISYNTH.COM 0:midisyn.com &&
+              cpmls -f wbw_hd512 cheese.img &&
+              ./tests/e2e/run_e2e.sh --no-build --headless
+            '
+        timeout-minutes: 10
+
+      - name: Upload test results (no-hw-io)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results-no-hw-io
           path: |
             tests/e2e/results/test_result.txt
             tests/e2e/results/serial_io.log
