@@ -1,17 +1,50 @@
 #!/bin/bash
-# Build script for RC2014 MIDI Synthesizer using z88dk Docker container
+# Build script for RC2014 MIDI Synthesizer
 #
 # Usage:
 #   ./build_docker.sh          Build the full synthesizer
 #   ./build_docker.sh test     Build the minimal hardware test
 #   ./build_docker.sh all      Build both
+#
+# When run outside the container, this script launches Docker automatically.
+# When run inside the container (or if zcc is on PATH), it compiles directly.
+#
+# Environment variables:
+#   NO_HW_IO=1        Disable hardware I/O calls (for testing without real HW)
+#   HD_IMAGE=<path>    Disk image to create/update (default: cheese.img, empty to skip)
+#   BUILD_IMAGE=<img>  Docker image to use (default: rc2014-build:latest)
 
 set -e
 
 HD_IMAGE="${HD_IMAGE-cheese.img}"
+BUILD_IMAGE="${BUILD_IMAGE:-rc2014-build:latest}"
 
 # RomWBW wbw_hd512 slice size: 1040 tracks * 16 sectors * 512 bytes = 8,519,680
 WBW_HD512_SIZE=8519680
+
+# ---------------------------------------------------------------------------
+# Detect whether we are inside the build container (zcc on PATH) or on the
+# host.  When on the host, re-exec the entire script inside the container.
+# ---------------------------------------------------------------------------
+if ! command -v zcc &>/dev/null; then
+    echo "zcc not found on PATH — running inside Docker ($BUILD_IMAGE)"
+    # Fall back to the upstream z88dk image if custom image is not available
+    if ! docker image inspect "$BUILD_IMAGE" &>/dev/null; then
+        echo "Image $BUILD_IMAGE not found, falling back to z88dk/z88dk:latest"
+        echo "(Build the full image with: docker build -t $BUILD_IMAGE .)"
+        BUILD_IMAGE="z88dk/z88dk:latest"
+    fi
+    exec docker run --rm \
+        -v "$(pwd):/workspace" -w /workspace \
+        -e NO_HW_IO="${NO_HW_IO:-}" \
+        -e HD_IMAGE="$HD_IMAGE" \
+        "$BUILD_IMAGE" \
+        ./build_docker.sh "$@"
+fi
+
+# ---------------------------------------------------------------------------
+# From here on we are running inside the container (or a host with zcc).
+# ---------------------------------------------------------------------------
 
 create_disk_image() {
     # Create a blank RomWBW wbw_hd512 disk image filled with 0xE5 (CP/M empty).
@@ -29,13 +62,12 @@ build_synth() {
         extra_cflags="-DNO_HW_IO"
     fi
 
-    docker run --rm -v "$(pwd):/workspace" -w /workspace z88dk/z88dk:latest \
-        zcc +cpm -v -SO3 -O3 --opt-code-size \
+    zcc +cpm -v -SO3 -O3 --opt-code-size \
         -Iinclude $extra_cflags \
         src/main.c src/core/synthesizer.c src/core/chip_manager.c src/midi/midi_driver.c src/chips/ym2149.c \
         -create-app -o midisynth
 
-    if [ -n "$HD_IMAGE" ]; then
+    if [ -n "$HD_IMAGE" ] && command -v mkfs.cpm &>/dev/null; then
         if [ ! -f "$HD_IMAGE" ]; then
             create_disk_image
         fi
@@ -52,12 +84,11 @@ build_synth() {
 build_test() {
     echo "=== Building Minimal Hardware Test ==="
 
-    docker run --rm -v "$(pwd):/workspace" -w /workspace z88dk/z88dk:latest \
-        zcc +cpm -v -O2 \
+    zcc +cpm -v -O2 \
         test_minimal.c \
         -create-app -o minimal_test
 
-    if [ -n "$HD_IMAGE" ]; then
+    if [ -n "$HD_IMAGE" ] && command -v mkfs.cpm &>/dev/null; then
         if [ ! -f "$HD_IMAGE" ]; then
             create_disk_image
         fi

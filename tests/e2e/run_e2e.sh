@@ -166,7 +166,9 @@ info "Checking dependencies…"
 require_cmd() { command -v "$1" &>/dev/null || fail "'$1' not found — $2"; }
 
 require_cmd "$MAME_CMD" "install MAME from https://www.mamedev.org/"
-require_cmd docker      "install Docker from https://docs.docker.com/"
+if [[ "$BUILD" == true ]]; then
+    require_cmd docker  "install Docker from https://docs.docker.com/"
+fi
 require_cmd cpmls       "install cpmtools: apt install cpmtools"
 require_cmd cpmcp       "install cpmtools: apt install cpmtools"
 require_cmd python3     "install Python 3: apt install python3"

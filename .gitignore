@@ -22,6 +22,9 @@ tone_test
 test_simple
 
 
+# MAME ROM directory (created by E2E setup when run inside Docker)
+roms/
+
 # Python bytecode cache
 __pycache__/
 *.pyc
