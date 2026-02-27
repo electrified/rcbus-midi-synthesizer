@@ -17,4 +17,7 @@ uint8_t find_voice_by_note(uint8_t note, uint8_t channel);
 // System status
 void synthesizer_print_status(void);
 
+// Global note counter for voice stealing
+extern uint32_t note_counter;
+
 #endif // SYNTHESIZER_H

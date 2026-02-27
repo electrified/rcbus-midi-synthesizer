@@ -1,4 +1,5 @@
 #include "../../include/ym2149.h"
+#include "../../include/synthesizer.h"
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
@@ -140,7 +141,7 @@ void ym2149_note_on(uint8_t voice, uint8_t note, uint8_t velocity, uint8_t chann
     v->midi_note = note;
     v->velocity = velocity;
     v->channel = channel;
-    v->start_time = 0;  // Could implement timer if needed
+    v->start_time = note_counter++;
 
     // Convert MIDI note to YM2149 frequency
     vx->frequency = ym2149_note_to_freq(note);
@@ -332,12 +333,17 @@ uint16_t ym2149_note_to_freq(uint8_t note) {
     return note_tp[note - YM2149_MIDI_NOTE_MIN];
 }
 
-// Apply pitch bend to frequency
+// Apply pitch bend to frequency (period)
 uint16_t ym2149_apply_pitch_bend(uint16_t base_freq, int16_t bend) {
-    // Simple linear pitch bend
-    // bend range: -8192 to +8192, map to -semitone to +semitone
-    int16_t bend_amount = bend / 8;  // Simplified calculation
-    int32_t result = (int32_t)base_freq + ((int32_t)base_freq * bend_amount / 100);
+    // Pitch up (positive bend) -> decrease period
+    // Pitch down (negative bend) -> increase period
+    // linear approximation for +/- 2 semitone range:
+    // Factor for +2 semitones: 0.8909 (10.9% decrease)
+    // Factor for -2 semitones: 1.1225 (12.3% increase)
+
+    // Using an average divisor for a decent linear approximation
+    int32_t delta = ((int32_t)base_freq * bend) / 72000L;
+    int32_t result = (int32_t)base_freq - delta;
 
     if (result < 1) result = 1;          // Clamp to minimum valid period
     if (result > 4095) result = 4095;    // Clamp to 12-bit max
