@@ -124,7 +124,6 @@ jobs:
             -v "$(pwd):/workspace" -w /workspace \
             $BUILD_IMAGE \
             bash -c '
-              ./tests/e2e/setup_e2e.sh &&
               dd if=/dev/zero bs=512 count=16640 2>/dev/null | tr "\000" "\345" > cheese.img &&
               mkfs.cpm -f wbw_hd512 cheese.img &&
               cpmcp -f wbw_hd512 cheese.img MIDISYNTH.COM 0:midisyn.com &&

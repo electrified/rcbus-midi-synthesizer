@@ -113,9 +113,9 @@ The `cheese.img` file is a RomWBW-format CP/M hard disk image containing `MIDISY
 
 All build and test tools are packaged in a single Docker image (`rc2014-build`), built from the repo's `Dockerfile`. It is an Ubuntu 24.04 image that builds z88dk from source (v2.4 release tarball) and includes MAME, cpmtools, sox, and python3.
 
-The `build_docker.sh` script auto-detects whether it's running inside the container (zcc on PATH) or on the host. On the host, it `exec`s itself inside Docker. The `rc2014-build` image must be built first with `docker build -t rc2014-build .`.
+The image also includes the RomWBW ROM image and CP/M system tracks needed for MAME E2E tests (no separate `setup_e2e.sh` step required). The `wbw_hd512` cpmtools diskdef is baked in as well.
 
-The `wbw_hd512` cpmtools diskdef is baked into the image.
+The `build_docker.sh` script auto-detects whether it's running inside the container (zcc on PATH) or on the host. On the host, it `exec`s itself inside Docker. The `rc2014-build` image must be built first with `docker build -t rc2014-build .`.
 
 ## Dependencies
 

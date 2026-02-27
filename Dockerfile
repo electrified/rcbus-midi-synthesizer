@@ -5,6 +5,7 @@
 #   - z88dk   (Z80 C cross-compiler, built from source)
 #   - cpmtools (CP/M disk image manipulation)
 #   - MAME    (RC2014 emulation for E2E tests)
+#   - RomWBW  (ROM image + CP/M system tracks for MAME)
 #   - sox     (audio analysis for E2E tests)
 #   - python3 (E2E test harness)
 #
@@ -88,6 +89,30 @@ diskdef wbw_hd512\n\
     boottrk 16\n\
     os 2.2\n\
 end\n' >> /etc/cpmtools/diskdefs
+
+# ---------------------------------------------------------------------------
+# RomWBW ROM and CP/M system tracks for MAME E2E tests
+# ---------------------------------------------------------------------------
+ARG ROMWBW_VERSION=3.5.1
+ARG MAME_ROM_DIR=/opt/mame-roms/rc2014zedp
+
+RUN mkdir -p "$MAME_ROM_DIR" && \
+    # Try both URL patterns (with and without 'v' prefix in the asset name)
+    ( curl -fsSL "https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-v${ROMWBW_VERSION}-Package.zip" \
+          -o /tmp/romwbw.zip || \
+      curl -fsSL "https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-${ROMWBW_VERSION}-Package.zip" \
+          -o /tmp/romwbw.zip ) && \
+    # Extract the RC2014 Z80 standard ROM
+    ROM_PATH=$(unzip -Z1 /tmp/romwbw.zip | grep -i 'Binary/RCZ80_std\.rom$' | head -1) && \
+    unzip -p /tmp/romwbw.zip "$ROM_PATH" > "$MAME_ROM_DIR/rcz80_std_3_0_1.rom" && \
+    # Extract CP/M system tracks (first 131072 bytes of the bootable disk image)
+    HD_PATH=$(unzip -Z1 /tmp/romwbw.zip | grep -i 'Binary/hd512_cpm22\.img$' | head -1) && \
+    unzip -p /tmp/romwbw.zip "$HD_PATH" | head -c 131072 > "$MAME_ROM_DIR/hd512_cpm22_systracks.bin" && \
+    rm -f /tmp/romwbw.zip
+
+# Configure MAME to find the ROMs
+RUN mkdir -p /root/.mame && \
+    echo "rompath /opt/mame-roms" > /root/.mame/mame.ini
 
 # Smoke-test: verify z88dk runs
 RUN zcc 2>&1 | head -1 && echo "z88dk OK"
