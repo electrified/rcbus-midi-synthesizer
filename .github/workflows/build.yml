@@ -124,8 +124,7 @@ jobs:
             -v "$(pwd):/workspace" -w /workspace \
             $BUILD_IMAGE \
             bash -c '
-              dd if=/dev/zero bs=512 count=16640 2>/dev/null | tr "\000" "\345" > cheese.img &&
-              mkfs.cpm -f wbw_hd512 cheese.img &&
+              cp /opt/mame-roms/rc2014zedp/hd512_blank.img cheese.img &&
               cpmcp -f wbw_hd512 cheese.img MIDISYNTH.COM 0:midisyn.com &&
               cpmls -f wbw_hd512 cheese.img &&
               ./tests/e2e/run_e2e.sh --no-build --headless

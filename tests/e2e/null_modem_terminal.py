@@ -409,18 +409,17 @@ def run_tests() -> bool:
                          "(no 'Boot [H=Help]:' seen)")
             return False
 
-        # RomWBW lists disks and waits for input.  The CF/IDE hard disk
-        # with our CP/M image is Disk 2 (IDE0).  The run_e2e.sh script
-        # overlays CP/M system tracks onto the test image so it is
-        # bootable.  Booting directly from IDE0 makes the hard disk
-        # drive A:, which is where midisynth.com lives.
+        # RomWBW lists disks and waits for input.  We boot from the
+        # ROM Disk (option 1) which contains CP/M.  The hard disk
+        # (IDE0) with our program does not need system tracks —
+        # it is mapped as C: when booting from ROM disk.
         #
         # Disk layout (default rc2014zedp):
         #   Disk 0  MD0   RAM Disk
-        #   Disk 1  MD1   ROM Disk
-        #   Disk 2  IDE0  Hard Disk (CF) ← boot target
-        boot_disk = os.environ.get("BOOT_DISK", "2")
-        log(f"Selecting boot disk {boot_disk} (IDE0 Hard Disk) …")
+        #   Disk 1  MD1   ROM Disk  ← boot target
+        #   Disk 2  IDE0  Hard Disk (CF) → mapped as C:
+        boot_disk = os.environ.get("BOOT_DISK", "1")
+        log(f"Selecting boot disk {boot_disk} (ROM Disk) …")
         time.sleep(0.5)
         term.send(boot_disk + "\r")
 
@@ -443,7 +442,17 @@ def run_tests() -> bool:
         # ------------------------------------------------------------------
         # 4. Launch midisynth
         # ------------------------------------------------------------------
-        # After booting from IDE0, A: is the hard disk with midisynth.
+        # After booting from ROM disk, A:=MD1 (ROM), C:=IDE0 (CF).
+        # Switch to C: where midisyn.com lives on the hard disk.
+        log("Switching to C: drive (IDE0 hard disk) …")
+        term.send("C:\r")
+        try:
+            term.wait_for("C>", timeout=CMD_TIMEOUT)
+        except TimeoutError as exc:
+            log(f"ERROR: {exc}")
+            write_result(False, "failed to switch to C: drive")
+            return False
+
         # CP/M 8.3 filename: midisynth.com is stored as midisyn.com
         log("Launching midisyn …")
         term.send("midisyn\r")
@@ -555,10 +564,10 @@ def run_tests() -> bool:
         log("Running 'q' (quit) …")
         term.send_cmd("q", timeout=CMD_TIMEOUT)
         try:
-            quit_out = term.wait_for("A>", timeout=CMD_TIMEOUT)
-            check(True, "quit: returned to CP/M A> prompt")
+            quit_out = term.wait_for("C>", timeout=CMD_TIMEOUT)
+            check(True, "quit: returned to CP/M C> prompt")
         except TimeoutError:
-            log("WARNING: did not see A> after quit "
+            log("WARNING: did not see C> after quit "
                 "(program may have exited cleanly anyway)")
 
         term.close()
