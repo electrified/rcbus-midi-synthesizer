@@ -10,7 +10,6 @@
 # When run inside the container (or if zcc is on PATH), it compiles directly.
 #
 # Environment variables:
-#   NO_HW_IO=1        Disable hardware I/O calls (for testing without real HW)
 #   HD_IMAGE=<path>    Disk image to create/update (default: cheese.img, empty to skip)
 #   BUILD_IMAGE=<img>  Docker image to use (default: rc2014-build:latest)
 
@@ -37,7 +36,6 @@ if ! command -v zcc &>/dev/null; then
     exec docker run --rm \
         --user "$(id -u):$(id -g)" \
         -v "$(pwd):/workspace" -w /workspace \
-        -e NO_HW_IO="${NO_HW_IO:-}" \
         -e HD_IMAGE="$HD_IMAGE" \
         "$BUILD_IMAGE" \
         ./build_docker.sh "$@"
@@ -61,14 +59,8 @@ create_disk_image() {
 build_synth() {
     echo "=== Building MIDI Synthesizer ==="
 
-    local extra_cflags=""
-    if [ "${NO_HW_IO:-}" = "1" ]; then
-        echo "(NO_HW_IO=1: hardware I/O calls disabled)"
-        extra_cflags="-DNO_HW_IO"
-    fi
-
     zcc +cpm -v -SO3 -O3 --opt-code-size \
-        -Iinclude $extra_cflags \
+        -Iinclude \
         src/main.c src/core/synthesizer.c src/core/chip_manager.c src/midi/midi_driver.c src/chips/ym2149.c \
         -create-app -o midisynth
 

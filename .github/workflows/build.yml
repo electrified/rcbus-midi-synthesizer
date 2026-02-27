@@ -20,12 +20,7 @@ jobs:
         run: |
           HD_IMAGE="" BUILD_IMAGE=rc2014-build ./build_docker.sh
           mkdir -p dist
-          cp MIDISYNTH.COM dist/MIDISYNTH-normal.COM
-
-      - name: Build with hardware I/O disabled
-        run: |
-          NO_HW_IO=1 HD_IMAGE="" BUILD_IMAGE=rc2014-build ./build_docker.sh
-          cp MIDISYNTH.COM dist/MIDISYNTH-no-hw-io.COM
+          cp MIDISYNTH.COM dist/MIDISYNTH.COM
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -33,9 +28,9 @@ jobs:
           name: midisynth-builds
           path: dist/
 
-      - name: E2E test (normal build)
+      - name: E2E test
         run: |
-          cp dist/MIDISYNTH-normal.COM MIDISYNTH.COM
+          cp dist/MIDISYNTH.COM MIDISYNTH.COM
           docker run --rm \
             -v "$(pwd):/workspace" -w /workspace \
             rc2014-build \
@@ -47,37 +42,11 @@ jobs:
             '
         timeout-minutes: 10
 
-      - name: Upload test results (normal)
+      - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-test-results-normal
-          path: |
-            tests/e2e/results/test_result.txt
-            tests/e2e/results/serial_io.log
-            tests/e2e/results/mame.log
-            tests/e2e/results/audio.wav
-
-      - name: E2E test (no-hw-io build)
-        run: |
-          cp dist/MIDISYNTH-no-hw-io.COM MIDISYNTH.COM
-          rm -rf tests/e2e/results
-          docker run --rm \
-            -v "$(pwd):/workspace" -w /workspace \
-            rc2014-build \
-            bash -c '
-              cp /opt/mame-roms/rc2014zedp/hd512_blank.img cheese.img &&
-              cpmcp -f wbw_hd512 cheese.img MIDISYNTH.COM 0:midisyn.com &&
-              cpmls -f wbw_hd512 cheese.img &&
-              ./tests/e2e/run_e2e.sh --no-build --headless
-            '
-        timeout-minutes: 10
-
-      - name: Upload test results (no-hw-io)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-test-results-no-hw-io
+          name: e2e-test-results
           path: |
             tests/e2e/results/test_result.txt
             tests/e2e/results/serial_io.log
