@@ -11,6 +11,9 @@ RC2014 Multi-Chip MIDI Synthesizer — a CP/M program for RC2014 Z80 systems tha
 ./build_docker.sh          # builds midisynth.com and copies to cheese.img
 ./build_docker.sh test     # builds the minimal hardware test (mt.com)
 
+# Build the Docker image (one-time, contains z88dk + MAME + cpmtools + sox)
+docker build -t rc2014-build .
+
 # Local z88dk build
 make all
 make clean
@@ -106,11 +109,22 @@ mame rc2014zedp -bus:5 cf -hard cheese.img -bus:12 ay_sound \
 
 The `cheese.img` file is a RomWBW-format CP/M hard disk image containing `MIDISYNTH.COM`.
 
+## Docker Image
+
+All build and test tools are packaged in a single Docker image (`rc2014-build`), built from the repo's `Dockerfile`. It uses a multi-stage build:
+
+1. **Stage 1**: Copies z88dk binaries from the official `z88dk/z88dk:latest` Alpine image
+2. **Stage 2**: Ubuntu 24.04 base with MAME, cpmtools, sox, python3, curl, musl compat layer
+
+The `build_docker.sh` script auto-detects whether it's running inside the container (zcc on PATH) or on the host. On the host, it `exec`s itself inside Docker. Falls back to `z88dk/z88dk:latest` if the custom image isn't built yet.
+
+The `wbw_hd512` cpmtools diskdef is baked into the image.
+
 ## Dependencies
 
-- **z88dk**: Z80 C cross-compiler (via Docker or local install)
-- **MAME 0.264+**: For emulation and E2E tests
-- **cpmtools**: `cpmls`/`cpmcp` for manipulating CP/M disk images
-- **Python 3.9+**: E2E test serial terminal (stdlib only, no pip packages)
-- **sox**: Optional, for audio silence detection in E2E tests
-- **Docker**: For the z88dk build container
+- **Docker**: For the build/test container (the only hard requirement)
+- **z88dk**: Z80 C cross-compiler (included in Docker image)
+- **MAME 0.264+**: For emulation and E2E tests (included in Docker image)
+- **cpmtools**: `cpmls`/`cpmcp` for manipulating CP/M disk images (included in Docker image)
+- **Python 3.9+**: E2E test serial terminal (included in Docker image)
+- **sox**: For audio silence detection in E2E tests (included in Docker image)

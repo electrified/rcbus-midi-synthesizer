@@ -12,18 +12,49 @@ on:
         required: false
         default: "0"
 
+env:
+  BUILD_IMAGE: rc2014-build
+
 jobs:
-  build:
+  build-image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build with z88dk Docker
+      - name: Build Docker image
+        run: docker build -t $BUILD_IMAGE .
+
+      - name: Save Docker image as artifact
+        run: docker save $BUILD_IMAGE | gzip > /tmp/rc2014-build.tar.gz
+
+      - name: Upload Docker image
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/rc2014-build.tar.gz
+          retention-days: 1
+
+  build:
+    runs-on: ubuntu-latest
+    needs: build-image
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and load Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: gunzip -c /tmp/rc2014-build.tar.gz | docker load
+
+      - name: Build with z88dk
         run: |
           NO_HW_IO="${{ github.event.inputs.no_hw_io || '0' }}" \
+          HD_IMAGE="" \
+          BUILD_IMAGE=$BUILD_IMAGE \
             ./build_docker.sh
-        env:
-          HD_IMAGE: ""  # skip cpmcp — no disk image needed in CI
 
       - name: Upload MIDISYNTH.COM
         uses: actions/upload-artifact@v4
@@ -33,14 +64,25 @@ jobs:
 
   build-no-hw-io:
     runs-on: ubuntu-latest
+    needs: build-image
     steps:
       - uses: actions/checkout@v4
 
+      - name: Download and load Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: gunzip -c /tmp/rc2014-build.tar.gz | docker load
+
       - name: Build with hardware I/O disabled
         run: |
-          NO_HW_IO=1 ./build_docker.sh
-        env:
-          HD_IMAGE: ""
+          NO_HW_IO=1 \
+          HD_IMAGE="" \
+          BUILD_IMAGE=$BUILD_IMAGE \
+            ./build_docker.sh
 
       - name: Upload MIDISYNTH.COM (no-hw-io)
         uses: actions/upload-artifact@v4
@@ -50,7 +92,7 @@ jobs:
 
   e2e-test:
     runs-on: ubuntu-latest
-    needs: [build, build-no-hw-io]
+    needs: [build-image, build, build-no-hw-io]
     strategy:
       fail-fast: false
       matrix:
@@ -62,52 +104,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install MAME, cpmtools, and sox
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mame mame-tools cpmtools sox
+      - name: Download and load Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: gunzip -c /tmp/rc2014-build.tar.gz | docker load
 
       - name: Download ${{ matrix.variant }} build artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.artifact }}
 
-      - name: Set up E2E test prerequisites
-        run: |
-          # Install the wbw_hd512 diskdef into the system cpmtools config
-          if ! grep -q "^diskdef wbw_hd512" /etc/cpmtools/diskdefs 2>/dev/null; then
-            echo "" | sudo tee -a /etc/cpmtools/diskdefs > /dev/null
-            cat <<'DISKDEF' | sudo tee -a /etc/cpmtools/diskdefs > /dev/null
-          # RomWBW 8320KB Hard Disk Slice (512 directory entry format)
-          diskdef wbw_hd512
-              seclen 512
-              tracks 1040
-              sectrk 16
-              blocksize 4096
-              maxdir 512
-              skew 0
-              boottrk 16
-              os 2.2
-          end
-          DISKDEF
-          fi
-
-          # Download RomWBW ROM and system tracks
-          MAME=/usr/games/mame ./tests/e2e/setup_e2e.sh
-
-      - name: Create disk image with MIDISYNTH.COM
-        run: |
-          # Create a blank wbw_hd512 disk image
-          dd if=/dev/zero bs=512 count=16640 2>/dev/null | tr '\000' '\345' > cheese.img
-          mkfs.cpm -f wbw_hd512 cheese.img
-
-          # Copy the built binary onto the disk image
-          cpmcp -f wbw_hd512 cheese.img MIDISYNTH.COM 0:midisyn.com
-          cpmls -f wbw_hd512 cheese.img
-
       - name: Run E2E tests (${{ matrix.variant }})
         run: |
-          MAME=/usr/games/mame ./tests/e2e/run_e2e.sh --no-build --headless
+          docker run --rm \
+            -v "$(pwd):/workspace" -w /workspace \
+            $BUILD_IMAGE \
+            bash -c '
+              ./tests/e2e/setup_e2e.sh &&
+              dd if=/dev/zero bs=512 count=16640 2>/dev/null | tr "\000" "\345" > cheese.img &&
+              mkfs.cpm -f wbw_hd512 cheese.img &&
+              cpmcp -f wbw_hd512 cheese.img MIDISYNTH.COM 0:midisyn.com &&
+              cpmls -f wbw_hd512 cheese.img &&
+              ./tests/e2e/run_e2e.sh --no-build --headless
+            '
         timeout-minutes: 10
 
       - name: Upload test results (${{ matrix.variant }})

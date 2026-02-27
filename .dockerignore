@@ -1,0 +1,26 @@
+# Build artifacts
+*.com
+*.COM
+*.o
+*.bin
+*.lst
+*.ihx
+*.hex
+*.map
+*.img
+
+# Test binaries
+hw_test
+minimal_test
+tone_test
+test_simple
+
+# Test results (regenerated each run)
+tests/e2e/results/
+
+# Git
+.git
+
+# Python
+__pycache__/
+*.pyc
