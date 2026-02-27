@@ -35,11 +35,11 @@ build_synth() {
         src/main.c src/core/synthesizer.c src/core/chip_manager.c src/midi/midi_driver.c src/chips/ym2149.c \
         -create-app -o midisynth
 
-    if [ ! -f "$HD_IMAGE" ]; then
-        create_disk_image
-    fi
+    if [ -n "$HD_IMAGE" ]; then
+        if [ ! -f "$HD_IMAGE" ]; then
+            create_disk_image
+        fi
 
-    if [ -f "$HD_IMAGE" ]; then
         local dest="${HD_DEST:-0:midisyn.com}"
         echo "Copying MIDISYNTH.COM to $HD_IMAGE as $dest..."
         cpmrm -f wbw_hd512 "$HD_IMAGE" "$dest" 2>/dev/null || true
@@ -57,11 +57,11 @@ build_test() {
         test_minimal.c \
         -create-app -o minimal_test
 
-    if [ ! -f "$HD_IMAGE" ]; then
-        create_disk_image
-    fi
+    if [ -n "$HD_IMAGE" ]; then
+        if [ ! -f "$HD_IMAGE" ]; then
+            create_disk_image
+        fi
 
-    if [ -f "$HD_IMAGE" ]; then
         local dest="${TEST_DEST:-0:mt.com}"
         echo "Copying MINIMAL_TEST.COM to $HD_IMAGE as $dest..."
         cpmrm -f wbw_hd512 "$HD_IMAGE" "$dest" 2>/dev/null || true
