@@ -220,7 +220,7 @@ else
             HD512_IMG_IN_ZIP=$(unzip -Z1 "$PKG_ZIP" | grep -i "Binary/hd512_cpm22.img$" | head -1 || true)
             if [[ -n "$HD512_IMG_IN_ZIP" ]]; then
                 info "  Extracting CP/M system tracks for bootable hard disk images…"
-                # System tracks = first boottrk * sectrk * seclen = 32 * 8 * 512 = 131072 bytes
+                # System tracks = first boottrk * sectrk * seclen = 16 * 16 * 512 = 131072 bytes
                 unzip -p "$PKG_ZIP" "$HD512_IMG_IN_ZIP" | head -c 131072 > "$SYSTRACKS_FILE"
                 SYSTRACKS_SIZE=$(wc -c < "$SYSTRACKS_FILE")
                 if [[ "$SYSTRACKS_SIZE" -eq 131072 ]]; then
@@ -242,15 +242,16 @@ echo ""
 # ---------------------------------------------------------------------------
 info "Step 2: wbw_hd512 disk format definition for cpmtools"
 
-WBW_HD512_DEF='# RomWBW 512-byte-sector hard-disk image (used by rc2014zedp in MAME)
+WBW_HD512_DEF='# RomWBW 8320KB Hard Disk Slice (512 directory entry format)
+# Geometry from https://github.com/wwarthen/RomWBW/blob/master/Tools/cpmtools/diskdefs
 diskdef wbw_hd512
     seclen 512
-    tracks 71
-    sectrk 8
+    tracks 1040
+    sectrk 16
     blocksize 4096
-    maxdir 128
+    maxdir 512
     skew 0
-    boottrk 32
+    boottrk 16
     os 2.2
 end'
 
