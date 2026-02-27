@@ -350,11 +350,15 @@ uint16_t ym2149_apply_pitch_bend(uint16_t base_freq, int16_t bend) {
 }
 
 // Read from YM2149 register (for detection)
+// On the RC2014 YM/AY card, the addr port (0xD8) serves double duty:
+//   OUT → latches the register address  (BDIR=1, BC1=1)
+//   IN  → reads the register data       (BDIR=0, BC1=1)
+// The data port (0xD0) is write-only (BDIR=1, BC1=0).
 static uint8_t ym2149_read_register(uint8_t reg) {
 #ifndef NO_HW_IO
     outp(YM2149_ADDR_PORT, reg);
     SmallDelay();
-    return inp(YM2149_DATA_PORT);
+    return inp(YM2149_ADDR_PORT);
 #else
     (void)reg;
     return 0x00;
