@@ -35,6 +35,7 @@ if ! command -v zcc &>/dev/null; then
         exit 1
     fi
     exec docker run --rm \
+        --user "$(id -u):$(id -g)" \
         -v "$(pwd):/workspace" -w /workspace \
         -e NO_HW_IO="${NO_HW_IO:-}" \
         -e HD_IMAGE="$HD_IMAGE" \
