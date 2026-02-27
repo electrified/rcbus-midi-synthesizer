@@ -105,9 +105,9 @@ RUN mkdir -p "$MAME_ROM_DIR" && \
     # Extract the RC2014 Z80 standard ROM
     ROM_PATH=$(unzip -Z1 /tmp/romwbw.zip | grep -i 'Binary/RCZ80_std\.rom$' | head -1) && \
     unzip -p /tmp/romwbw.zip "$ROM_PATH" > "$MAME_ROM_DIR/rcz80_std_3_0_1.rom" && \
-    # Extract CP/M system tracks (first 131072 bytes of the bootable disk image)
-    HD_PATH=$(unzip -Z1 /tmp/romwbw.zip | grep -i 'Binary/hd512_cpm22\.img$' | head -1) && \
-    unzip -p /tmp/romwbw.zip "$HD_PATH" | head -c 131072 > "$MAME_ROM_DIR/hd512_cpm22_systracks.bin" && \
+    # Extract blank HD image (pre-formatted wbw_hd512 CP/M disk, no system tracks needed)
+    BLANK_PATH=$(unzip -Z1 /tmp/romwbw.zip | grep -i 'Binary/hd512_blank\.img$' | head -1) && \
+    unzip -p /tmp/romwbw.zip "$BLANK_PATH" > "$MAME_ROM_DIR/hd512_blank.img" && \
     rm -f /tmp/romwbw.zip
 
 # Configure MAME to find the ROMs

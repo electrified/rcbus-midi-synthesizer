@@ -19,8 +19,8 @@ set -e
 HD_IMAGE="${HD_IMAGE-cheese.img}"
 BUILD_IMAGE="${BUILD_IMAGE:-rc2014-build:latest}"
 
-# RomWBW wbw_hd512 slice size: 1040 tracks * 16 sectors * 512 bytes = 8,519,680
-WBW_HD512_SIZE=8519680
+# Pre-formatted blank wbw_hd512 image from RomWBW (baked into Docker image)
+BLANK_HD_IMAGE="/opt/mame-roms/rc2014zedp/hd512_blank.img"
 
 # ---------------------------------------------------------------------------
 # Detect whether we are inside the build container (zcc on PATH) or on the
@@ -47,10 +47,14 @@ fi
 # ---------------------------------------------------------------------------
 
 create_disk_image() {
-    # Create a blank RomWBW wbw_hd512 disk image filled with 0xE5 (CP/M empty).
-    echo "Creating blank wbw_hd512 disk image: $HD_IMAGE ($WBW_HD512_SIZE bytes)"
-    dd if=/dev/zero bs=512 count=16640 2>/dev/null | tr '\000' '\345' > "$HD_IMAGE"
-    mkfs.cpm -f wbw_hd512 "$HD_IMAGE"
+    if [ -f "$BLANK_HD_IMAGE" ]; then
+        echo "Creating disk image from RomWBW blank: $HD_IMAGE"
+        cp "$BLANK_HD_IMAGE" "$HD_IMAGE"
+    else
+        echo "Creating blank wbw_hd512 disk image: $HD_IMAGE"
+        dd if=/dev/zero bs=512 count=16640 2>/dev/null | tr '\000' '\345' > "$HD_IMAGE"
+        mkfs.cpm -f wbw_hd512 "$HD_IMAGE"
+    fi
 }
 
 build_synth() {
