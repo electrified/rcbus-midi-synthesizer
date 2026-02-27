@@ -47,3 +47,68 @@ jobs:
         with:
           name: midisynth-com-no-hw-io
           path: MIDISYNTH.COM
+
+  e2e-test:
+    runs-on: ubuntu-latest
+    needs: build-no-hw-io
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MAME, cpmtools, and sox
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mame mame-tools cpmtools sox
+
+      - name: Download NO_HW_IO build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: midisynth-com-no-hw-io
+
+      - name: Set up E2E test prerequisites
+        run: |
+          # Install the wbw_hd512 diskdef into the system cpmtools config
+          if ! grep -q "^diskdef wbw_hd512" /etc/cpmtools/diskdefs 2>/dev/null; then
+            echo "" | sudo tee -a /etc/cpmtools/diskdefs > /dev/null
+            cat <<'DISKDEF' | sudo tee -a /etc/cpmtools/diskdefs > /dev/null
+          # RomWBW 8320KB Hard Disk Slice (512 directory entry format)
+          diskdef wbw_hd512
+              seclen 512
+              tracks 1040
+              sectrk 16
+              blocksize 4096
+              maxdir 512
+              skew 0
+              boottrk 16
+              os 2.2
+          end
+          DISKDEF
+          fi
+
+          # Download RomWBW ROM and system tracks
+          MAME=/usr/games/mame ./tests/e2e/setup_e2e.sh
+
+      - name: Create disk image with MIDISYNTH.COM
+        run: |
+          # Create a blank wbw_hd512 disk image
+          dd if=/dev/zero bs=512 count=16640 2>/dev/null | tr '\000' '\345' > cheese.img
+          mkfs.cpm -f wbw_hd512 cheese.img
+
+          # Copy the built binary onto the disk image
+          cpmcp -f wbw_hd512 cheese.img MIDISYNTH.COM 0:midisyn.com
+          cpmls -f wbw_hd512 cheese.img
+
+      - name: Run E2E tests
+        run: |
+          MAME=/usr/games/mame ./tests/e2e/run_e2e.sh --no-build --headless
+        timeout-minutes: 10
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: |
+            tests/e2e/results/test_result.txt
+            tests/e2e/results/serial_io.log
+            tests/e2e/results/mame.log
+            tests/e2e/results/audio.wav

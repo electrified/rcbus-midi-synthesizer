@@ -7,5 +7,5 @@ WARNING: the machine might not run correctly.
 [mame_test] null-modem watchdog started
 [mame_test] Waiting for done flag: tests/e2e/results/mame_done.flag
 [mame_test] Safety cutoff: 36000 frames
-[mame_test] Done flag found at frame 1140 — exiting MAME
-Average speed: 57.17% (18 seconds)
+[mame_test] Done flag found at frame 1200 — exiting MAME
+Average speed: 58.52% (19 seconds)
