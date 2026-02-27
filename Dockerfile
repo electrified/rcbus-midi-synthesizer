@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         dos2unix \
         texinfo \
         curl \
+        ca-certificates \
         # CP/M disk image tools
         cpmtools \
         # MAME emulator (RC2014 driver for E2E tests)
