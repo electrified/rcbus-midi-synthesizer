@@ -46,7 +46,7 @@ The tests use MAME's null-modem serial emulation over TCP:
 ### E2E Test Flow
 
 1. Wait for `Boot [H=Help]:` (RomWBW boot loader)
-2. Send boot disk number (`1` = ROM Disk)
+2. Send `c` to boot CP/M from ROM
 3. Wait for `A>` (CP/M prompt on ROM disk)
 4. Switch to `C:` drive (IDE0 hard disk with midisynth)
 5. Launch `midisynth`, wait for `Ready.`
@@ -59,7 +59,7 @@ The tests use MAME's null-modem serial emulation over TCP:
 - **RomWBW ROM CRC mismatch**: MAME warns about wrong checksums when using a RomWBW version newer than 3.0.1. This is harmless — the ROM still boots. The warning can be ignored.
 - **RS232 slot detection**: MAME 0.264 uses `bus:4:sio:rs232a`. The slot auto-detection uses `grep -oP 'bus:\S*rs232a'`.
 - **Serial line endings**: CP/M expects CR (`\r`), not LF (`\n`). The `send()` method in null_modem_terminal.py transmits raw bytes.
-- **Boot disk number**: Default is `1` (ROM Disk). CP/M boots from the ROM disk; the hard disk (IDE0/CF) with midisynth is mapped as `C:`. Override with `BOOT_DISK` env var.
+- **Boot command**: Default is `c` (boot CP/M from ROM). The hard disk (IDE0/CF) with midisynth is mapped as `C:`. Override with `BOOT_DISK` env var.
 - **Disk image**: `cheese.img` is created from the RomWBW `hd512_blank.img` (baked into the Docker image). No system tracks are needed since we boot from ROM disk.
 
 ## Code Architecture

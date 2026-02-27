@@ -409,19 +409,19 @@ def run_tests() -> bool:
                          "(no 'Boot [H=Help]:' seen)")
             return False
 
-        # RomWBW lists disks and waits for input.  We boot from the
-        # ROM Disk (option 1) which contains CP/M.  The hard disk
-        # (IDE0) with our program does not need system tracks —
-        # it is mapped as C: when booting from ROM disk.
+        # RomWBW lists disks and waits for input.  Typing 'c' at the
+        # boot prompt launches CP/M from ROM.  The hard disk (IDE0)
+        # with our program does not need system tracks — it is
+        # mapped as C: when booting from ROM disk.
         #
         # Disk layout (default rc2014zedp):
         #   Disk 0  MD0   RAM Disk
-        #   Disk 1  MD1   ROM Disk  ← boot target
+        #   Disk 1  MD1   ROM Disk
         #   Disk 2  IDE0  Hard Disk (CF) → mapped as C:
-        boot_disk = os.environ.get("BOOT_DISK", "1")
-        log(f"Selecting boot disk {boot_disk} (ROM Disk) …")
+        boot_cmd = os.environ.get("BOOT_DISK", "c")
+        log(f"Sending '{boot_cmd}' to boot CP/M from ROM …")
         time.sleep(0.5)
-        term.send(boot_disk + "\r")
+        term.send(boot_cmd + "\r")
 
         # ------------------------------------------------------------------
         # 3. Wait for CP/M A> prompt
