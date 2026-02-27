@@ -424,15 +424,15 @@ def run_tests() -> bool:
         term.send(boot_cmd + "\r")
 
         # ------------------------------------------------------------------
-        # 3. Wait for CP/M A> prompt
+        # 3. Wait for CP/M B> prompt
         # ------------------------------------------------------------------
-        log("Waiting for CP/M A> prompt …")
+        log("Waiting for CP/M B> prompt …")
         try:
-            boot_out = term.wait_for("A>", timeout=BOOT_TIMEOUT)
-            log("CP/M boot complete — got A> prompt")
+            boot_out = term.wait_for("B>", timeout=BOOT_TIMEOUT)
+            log("CP/M boot complete — got B> prompt")
         except TimeoutError as exc:
             log(f"ERROR: {exc}")
-            write_result(False, "CP/M did not boot (no A> prompt seen)")
+            write_result(False, "CP/M did not boot (no B> prompt seen)")
             return False
 
         # Small pause after boot to let CP/M settle
