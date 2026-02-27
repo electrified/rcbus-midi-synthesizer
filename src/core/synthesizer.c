@@ -3,6 +3,8 @@
 #include "../../include/chip_manager.h"
 #include <stdio.h>
 
+uint32_t note_counter = 0;
+
 // Simple voice allocation for current chip
 uint8_t allocate_voice(uint8_t note, uint8_t velocity, uint8_t channel) {
     // Suppress unused parameter warnings
@@ -25,6 +27,7 @@ uint8_t allocate_voice(uint8_t note, uint8_t velocity, uint8_t channel) {
     uint32_t oldest_time = current_chip->voices[0].start_time;
     
     for (uint8_t i = 1; i < current_chip->voice_count; i++) {
+        // Lower start_time means older note
         if (current_chip->voices[i].start_time < oldest_time) {
             oldest_time = current_chip->voices[i].start_time;
             oldest_voice = i;

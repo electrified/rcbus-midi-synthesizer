@@ -2,6 +2,7 @@
 #include "../../include/chip_interface.h"
 #include "../../include/synthesizer.h"
 #include <stdint.h>
+#include <cpm.h>
 
 // Global MIDI state
 midi_state_t midi_state;
@@ -38,18 +39,16 @@ void midi_driver_init(void) {
 
 // Check if MIDI data is available
 uint8_t midi_driver_available(void) {
-    // This will need to be implemented based on your MIDI interface
-    // For now, return 0 (no data available)
-    // TODO: Implement UART status checking for RC2014 MIDI board
-    return 0;
+    // Use CP/M BIOS AUXIST (Entry 18) to check auxiliary input status
+    // This typically maps to the second serial port on RC2014/RomWBW
+    return (uint8_t)bios(BIOS_AUXIST, 0, 0);
 }
 
 // Read one byte from MIDI interface
 uint8_t midi_driver_read_byte(void) {
-    // This will need to be implemented based on your MIDI interface
-    // For now, return 0 (no data)
-    // TODO: Implement UART read for RC2014 MIDI board
-    return 0;
+    // Use CP/M BIOS READER (Entry 7 / BIOS_JMP) to read from the reader device
+    // This typically maps to the second serial port
+    return (uint8_t)bios(BIOS_JMP, 0, 0);
 }
 
 // Process all available MIDI input
@@ -167,11 +166,10 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                 switch (data1) {
                     case 1: case 2: case 3: case 4:  // Volume controls
                         if (current_chip->set_volume) {
-                            // Map to first active voice or global
+                            // Apply to all active voices on this channel
                             for (uint8_t i = 0; i < current_chip->voice_count; i++) {
-                                if (current_chip->voices[i].active) {
+                                if (current_chip->voices[i].active && current_chip->voices[i].channel == channel) {
                                     current_chip->set_volume(i, (uint16_t)data2 * 15 / 127);
-                                    break;
                                 }
                             }
                         }
@@ -180,9 +178,8 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                     case 5:  // Attack
                         if (current_chip->set_attack) {
                             for (uint8_t i = 0; i < current_chip->voice_count; i++) {
-                                if (current_chip->voices[i].active) {
+                                if (current_chip->voices[i].active && current_chip->voices[i].channel == channel) {
                                     current_chip->set_attack(i, data2);
-                                    break;
                                 }
                             }
                         }
@@ -191,9 +188,8 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                     case 6:  // Decay
                         if (current_chip->set_decay) {
                             for (uint8_t i = 0; i < current_chip->voice_count; i++) {
-                                if (current_chip->voices[i].active) {
+                                if (current_chip->voices[i].active && current_chip->voices[i].channel == channel) {
                                     current_chip->set_decay(i, data2);
-                                    break;
                                 }
                             }
                         }
@@ -202,9 +198,8 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                     case 7:  // Sustain
                         if (current_chip->set_sustain) {
                             for (uint8_t i = 0; i < current_chip->voice_count; i++) {
-                                if (current_chip->voices[i].active) {
+                                if (current_chip->voices[i].active && current_chip->voices[i].channel == channel) {
                                     current_chip->set_sustain(i, data2);
-                                    break;
                                 }
                             }
                         }
@@ -213,9 +208,8 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                     case 8:  // Release
                         if (current_chip->set_release) {
                             for (uint8_t i = 0; i < current_chip->voice_count; i++) {
-                                if (current_chip->voices[i].active) {
+                                if (current_chip->voices[i].active && current_chip->voices[i].channel == channel) {
                                     current_chip->set_release(i, data2);
-                                    break;
                                 }
                             }
                         }
