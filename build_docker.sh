@@ -10,6 +10,16 @@ set -e
 
 HD_IMAGE="${HD_IMAGE-cheese.img}"
 
+# RomWBW wbw_hd512 slice size: 1040 tracks * 16 sectors * 512 bytes = 8,519,680
+WBW_HD512_SIZE=8519680
+
+create_disk_image() {
+    # Create a blank RomWBW wbw_hd512 disk image filled with 0xE5 (CP/M empty).
+    echo "Creating blank wbw_hd512 disk image: $HD_IMAGE ($WBW_HD512_SIZE bytes)"
+    dd if=/dev/zero bs=512 count=16640 2>/dev/null | tr '\000' '\345' > "$HD_IMAGE"
+    mkfs.cpm -f wbw_hd512 "$HD_IMAGE"
+}
+
 build_synth() {
     echo "=== Building MIDI Synthesizer ==="
 
@@ -24,6 +34,10 @@ build_synth() {
         -Iinclude $extra_cflags \
         src/main.c src/core/synthesizer.c src/core/chip_manager.c src/midi/midi_driver.c src/chips/ym2149.c \
         -create-app -o midisynth
+
+    if [ ! -f "$HD_IMAGE" ]; then
+        create_disk_image
+    fi
 
     if [ -f "$HD_IMAGE" ]; then
         local dest="${HD_DEST:-0:midisyn.com}"
@@ -42,6 +56,10 @@ build_test() {
         zcc +cpm -v -O2 \
         test_minimal.c \
         -create-app -o minimal_test
+
+    if [ ! -f "$HD_IMAGE" ]; then
+        create_disk_image
+    fi
 
     if [ -f "$HD_IMAGE" ]; then
         local dest="${TEST_DEST:-0:mt.com}"
