@@ -2,10 +2,61 @@
 #include "../../include/chip_interface.h"
 #include "../../include/synthesizer.h"
 #include <stdint.h>
+#include <stdio.h>
 
 // Global MIDI state
 midi_state_t midi_state;
 midi_cc_control_t midi_cc_controls[12];
+
+// Current MIDI input mode
+static uint8_t midi_mode = MIDI_MODE_NONE;
+
+// Keyboard MIDI state
+static uint8_t kb_current_octave = 5;    // Default octave (C5 = MIDI 60)
+static uint8_t kb_current_velocity = 100; // Default velocity
+static uint8_t kb_last_note = 0xFF;       // Last note played (for note-off)
+
+// CP/M BIOS call helpers for auxiliary serial port
+// The BIOS jump table starts at (WBOOT_addr - 3).
+// AUXIST (aux input status) = BIOS_BASE + 18  (vector 6 * 3)
+// AUXIN  (aux input byte)   = BIOS_BASE + 15  (vector 5 * 3)
+
+// Call BIOS AUXIST — returns 0xFF if char available, 0x00 if not
+static uint8_t bios_auxist(void) {
+    uint8_t result;
+    // Read WBOOT vector from address 0x0001, subtract 3 to get BIOS base,
+    // add 18 to get AUXIST entry point, then call it.
+    __asm
+        ld hl, (1)          ; WBOOT vector
+        ld de, -3+18        ; offset: -3 (base) + 18 (AUXIST)
+        add hl, de
+        call _bios_call_hl
+        ld l, a
+    __endasm;
+    // z88dk sdcc_iy returns uint8_t in L
+    (void)result;  // suppress warning; value returned via L register
+}
+
+// Call BIOS AUXIN — returns byte from auxiliary device (blocking)
+static uint8_t bios_auxin(void) {
+    uint8_t result;
+    __asm
+        ld hl, (1)          ; WBOOT vector
+        ld de, -3+15        ; offset: -3 (base) + 15 (AUXIN)
+        add hl, de
+        call _bios_call_hl
+        ld l, a
+    __endasm;
+    (void)result;
+}
+
+// Shared trampoline — called from asm above.
+// Located here so the linker can find it. Must not be static.
+void bios_call_hl(void) __naked {
+    __asm
+        jp (hl)
+    __endasm;
+}
 
 // Initialize MIDI driver
 void midi_driver_init(void) {
@@ -17,7 +68,12 @@ void midi_driver_init(void) {
     midi_state.data2 = 0;
     midi_state.expected_bytes = 0;
     midi_state.byte_count = 0;
-    
+
+    midi_mode = MIDI_MODE_NONE;
+    kb_current_octave = 5;
+    kb_current_velocity = 100;
+    kb_last_note = 0xFF;
+
     // Initialize CC controls mapping
     // 8 rotary knobs
     for (uint8_t i = 0; i < 8; i++) {
@@ -26,7 +82,7 @@ void midi_driver_init(void) {
         midi_cc_controls[i].is_knob = 1;
         midi_cc_controls[i].name = "Knob";
     }
-    
+
     // 4 sliders
     for (uint8_t i = 0; i < 4; i++) {
         midi_cc_controls[i + 8].cc_number = i + 9;  // CC#9-12 for sliders
@@ -36,27 +92,153 @@ void midi_driver_init(void) {
     }
 }
 
-// Check if MIDI data is available
-uint8_t midi_driver_available(void) {
-    // This will need to be implemented based on your MIDI interface
-    // For now, return 0 (no data available)
-    // TODO: Implement UART status checking for RC2014 MIDI board
-    return 0;
+// Set MIDI input mode
+void midi_set_mode(uint8_t mode) {
+    midi_mode = mode;
 }
 
-// Read one byte from MIDI interface
+// Get current MIDI input mode
+uint8_t midi_get_mode(void) {
+    return midi_mode;
+}
+
+// Check if MIDI data is available (BIOS mode)
+uint8_t midi_driver_available(void) {
+    if (midi_mode != MIDI_MODE_BIOS) {
+        return 0;
+    }
+    return bios_auxist();
+}
+
+// Read one byte from MIDI interface (BIOS mode)
 uint8_t midi_driver_read_byte(void) {
-    // This will need to be implemented based on your MIDI interface
-    // For now, return 0 (no data)
-    // TODO: Implement UART read for RC2014 MIDI board
-    return 0;
+    if (midi_mode != MIDI_MODE_BIOS) {
+        return 0;
+    }
+    return bios_auxin();
 }
 
 // Process all available MIDI input
 void midi_driver_process_input(void) {
+    if (midi_mode != MIDI_MODE_BIOS) {
+        return;
+    }
     while (midi_driver_available()) {
         uint8_t byte = midi_driver_read_byte();
         midi_process_byte(byte);
+    }
+}
+
+// Keyboard MIDI mode: map a key press to MIDI note/CC messages
+// Key mapping (piano-style on QWERTY keyboard):
+//   z s x d c v g b h n j m  = C C# D D# E F F# G G# A A# B (lower octave)
+//   q 2 w 3 e r 5 t 6 y 7 u  = C C# D D# E F F# G G# A A# B (upper octave)
+//   [ / ]  = octave down / panic / octave up
+//   - / +  = velocity down / up
+void midi_keyboard_process_key(char key) {
+    int8_t note_offset = -1;  // -1 = not a note key
+    uint8_t upper = 0;        // 1 = upper octave row
+
+    // Lower octave row (z-m keys)
+    switch (key) {
+        case 'z': note_offset = 0; break;   // C
+        case 's': note_offset = 1; break;   // C#
+        case 'x': note_offset = 2; break;   // D
+        case 'd': note_offset = 3; break;   // D#
+        case 'c': note_offset = 4; break;   // E
+        case 'v': note_offset = 5; break;   // F
+        case 'g': note_offset = 6; break;   // F#
+        case 'b': note_offset = 7; break;   // G
+        case 'h': note_offset = 8; break;   // G#
+        case 'n': note_offset = 9; break;   // A
+        case 'j': note_offset = 10; break;  // A#
+        case 'm': note_offset = 11; break;  // B
+    }
+
+    // Upper octave row (q-u keys)
+    if (note_offset < 0) {
+        upper = 1;
+        switch (key) {
+            case 'q': note_offset = 0; break;   // C
+            case '2': note_offset = 1; break;   // C#
+            case 'w': note_offset = 2; break;   // D
+            case '3': note_offset = 3; break;   // D#
+            case 'e': note_offset = 4; break;   // E
+            case 'r': note_offset = 5; break;   // F
+            case '5': note_offset = 6; break;   // F#
+            case 'f': note_offset = 7; break;   // G  (using 'f' since 't' conflicts)
+            case '6': note_offset = 8; break;   // G#
+            case 'y': note_offset = 9; break;   // A
+            case '7': note_offset = 10; break;  // A#
+            case 'u': note_offset = 11; break;  // B
+        }
+    }
+
+    if (note_offset >= 0) {
+        // Release previous note if one is held
+        if (kb_last_note != 0xFF) {
+            midi_process_message(MIDI_NOTE_OFF, kb_last_note, 0);
+        }
+
+        // Calculate MIDI note number
+        uint8_t octave = kb_current_octave;
+        if (upper) octave++;
+        uint8_t midi_note = (octave * 12) + note_offset;
+
+        // Clamp to valid MIDI range
+        if (midi_note > 127) midi_note = 127;
+
+        // Send note-on
+        midi_process_message(MIDI_NOTE_ON, midi_note, kb_current_velocity);
+        kb_last_note = midi_note;
+        printf("Note: %d vel: %d\n", midi_note, kb_current_velocity);
+        return;
+    }
+
+    // Non-note keys
+    switch (key) {
+        case '[':  // Octave down
+            if (kb_current_octave > 0) {
+                kb_current_octave--;
+                printf("Octave: %d\n", kb_current_octave);
+            }
+            break;
+        case ']':  // Octave up
+            if (kb_current_octave < 9) {
+                kb_current_octave++;
+                printf("Octave: %d\n", kb_current_octave);
+            }
+            break;
+        case '-':  // Velocity down
+            if (kb_current_velocity > 10) {
+                kb_current_velocity -= 10;
+            } else {
+                kb_current_velocity = 1;
+            }
+            printf("Velocity: %d\n", kb_current_velocity);
+            break;
+        case '=':  // Velocity up
+            if (kb_current_velocity < 118) {
+                kb_current_velocity += 10;
+            } else {
+                kb_current_velocity = 127;
+            }
+            printf("Velocity: %d\n", kb_current_velocity);
+            break;
+        case ' ':  // Space = note off (release current note)
+            if (kb_last_note != 0xFF) {
+                midi_process_message(MIDI_NOTE_OFF, kb_last_note, 0);
+                printf("Note off: %d\n", kb_last_note);
+                kb_last_note = 0xFF;
+            }
+            break;
+        case '/':  // Panic
+            if (kb_last_note != 0xFF) {
+                midi_process_message(MIDI_NOTE_OFF, kb_last_note, 0);
+                kb_last_note = 0xFF;
+            }
+            synthesizer_panic();
+            break;
     }
 }
 

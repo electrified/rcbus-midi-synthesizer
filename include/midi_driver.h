@@ -10,6 +10,11 @@
 #define MIDI_PROGRAM_CHANGE  0xC0
 #define MIDI_PITCH_BEND      0xE0
 
+// MIDI input mode
+#define MIDI_MODE_NONE       0   // No MIDI input (default)
+#define MIDI_MODE_BIOS       1   // BIOS serial (CP/M AUX device)
+#define MIDI_MODE_KEYBOARD   2   // Console keyboard input
+
 // MIDI status structure
 typedef struct {
     uint8_t status;         // Current running status
@@ -34,6 +39,13 @@ void midi_driver_init(void);
 uint8_t midi_driver_available(void);
 uint8_t midi_driver_read_byte(void);
 void midi_driver_process_input(void);
+
+// MIDI input mode control
+void midi_set_mode(uint8_t mode);
+uint8_t midi_get_mode(void);
+
+// Keyboard MIDI mode
+void midi_keyboard_process_key(char key);
 
 // MIDI message processing
 void midi_process_byte(uint8_t byte);
