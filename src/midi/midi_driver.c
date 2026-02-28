@@ -2,10 +2,52 @@
 #include "../../include/chip_interface.h"
 #include "../../include/synthesizer.h"
 #include <stdint.h>
+#include <stdio.h>
 
 // Global MIDI state
 midi_state_t midi_state;
 midi_cc_control_t midi_cc_controls[12];
+
+// Current MIDI input mode
+static uint8_t midi_mode = MIDI_MODE_NONE;
+
+// Keyboard MIDI state
+static uint8_t kb_current_octave = 5;    // Default octave (C5 = MIDI 60)
+static uint8_t kb_current_velocity = 100; // Default velocity
+static uint8_t kb_last_note = 0xFF;       // Last note played (for note-off)
+
+// Direct Z80-SIO hardware I/O for auxiliary serial port (Channel B).
+//
+// HBIOS RST 08H was found to corrupt CP/M console I/O state, so we
+// bypass HBIOS entirely and read the SIO registers directly.
+//
+// RC2014 Z80-SIO port map (base 0x80):
+//   0x80 = Channel A data    0x81 = Channel A control
+//   0x82 = Channel B data    0x83 = Channel B control
+//
+// RR0 bit 0 = Rx Character Available.
+// Writing 0x00 to the control port selects RR0 for the next read.
+
+// Check SIO Channel B Rx status — returns 0 if empty, 1 if data available
+static uint8_t bios_auxist(void) __naked {
+    __asm
+        xor a               ; A = 0 → select RR0
+        out (0x83), a       ; SIO Ch.B control: point to RR0
+        in a, (0x83)        ; read RR0
+        and 1               ; isolate bit 0 (Rx Char Available)
+        ld l, a             ; return in L
+        ret
+    __endasm;
+}
+
+// Read one byte from SIO Channel B data register
+static uint8_t bios_auxin(void) __naked {
+    __asm
+        in a, (0x82)        ; read SIO Ch.B data register
+        ld l, a             ; return in L
+        ret
+    __endasm;
+}
 
 // Initialize MIDI driver
 void midi_driver_init(void) {
@@ -17,7 +59,12 @@ void midi_driver_init(void) {
     midi_state.data2 = 0;
     midi_state.expected_bytes = 0;
     midi_state.byte_count = 0;
-    
+
+    midi_mode = MIDI_MODE_NONE;
+    kb_current_octave = 5;
+    kb_current_velocity = 100;
+    kb_last_note = 0xFF;
+
     // Initialize CC controls mapping
     // 8 rotary knobs
     for (uint8_t i = 0; i < 8; i++) {
@@ -26,7 +73,7 @@ void midi_driver_init(void) {
         midi_cc_controls[i].is_knob = 1;
         midi_cc_controls[i].name = "Knob";
     }
-    
+
     // 4 sliders
     for (uint8_t i = 0; i < 4; i++) {
         midi_cc_controls[i + 8].cc_number = i + 9;  // CC#9-12 for sliders
@@ -36,27 +83,156 @@ void midi_driver_init(void) {
     }
 }
 
-// Check if MIDI data is available
+// Set MIDI input mode
+void midi_set_mode(uint8_t mode) {
+    midi_mode = mode;
+}
+
+// Get current MIDI input mode
+uint8_t midi_get_mode(void) {
+    return midi_mode;
+}
+
+// Check if MIDI data is available (BIOS mode)
 uint8_t midi_driver_available(void) {
-    // This will need to be implemented based on your MIDI interface
-    // For now, return 0 (no data available)
-    // TODO: Implement UART status checking for RC2014 MIDI board
-    return 0;
+    if (midi_mode != MIDI_MODE_BIOS) {
+        return 0;
+    }
+    return bios_auxist();
 }
 
-// Read one byte from MIDI interface
+// Read one byte from MIDI interface (BIOS mode)
 uint8_t midi_driver_read_byte(void) {
-    // This will need to be implemented based on your MIDI interface
-    // For now, return 0 (no data)
-    // TODO: Implement UART read for RC2014 MIDI board
-    return 0;
+    if (midi_mode != MIDI_MODE_BIOS) {
+        return 0;
+    }
+    return bios_auxin();
 }
 
-// Process all available MIDI input
+// Process one pending MIDI byte (if available).
+// Only one byte per call so the main loop always returns to kbhit()
+// for console command processing.  At 7.3 MHz the loop iterates fast
+// enough to keep up with 31250-baud MIDI (≈3125 bytes/sec).
 void midi_driver_process_input(void) {
-    while (midi_driver_available()) {
+    if (midi_mode != MIDI_MODE_BIOS) {
+        return;
+    }
+    if (midi_driver_available()) {
         uint8_t byte = midi_driver_read_byte();
         midi_process_byte(byte);
+    }
+}
+
+// Keyboard MIDI mode: map a key press to MIDI note/CC messages
+// Key mapping (piano-style on QWERTY keyboard):
+//   z s x d c v g b h n j m  = C C# D D# E F F# G G# A A# B (lower octave)
+//   q 2 w 3 e r 5 t 6 y 7 u  = C C# D D# E F F# G G# A A# B (upper octave)
+//   [ / ]  = octave down / panic / octave up
+//   - / +  = velocity down / up
+void midi_keyboard_process_key(char key) {
+    int8_t note_offset = -1;  // -1 = not a note key
+    uint8_t upper = 0;        // 1 = upper octave row
+
+    // Lower octave row (z-m keys)
+    switch (key) {
+        case 'z': note_offset = 0; break;   // C
+        case 's': note_offset = 1; break;   // C#
+        case 'x': note_offset = 2; break;   // D
+        case 'd': note_offset = 3; break;   // D#
+        case 'c': note_offset = 4; break;   // E
+        case 'v': note_offset = 5; break;   // F
+        case 'g': note_offset = 6; break;   // F#
+        case 'b': note_offset = 7; break;   // G
+        case 'h': note_offset = 8; break;   // G#
+        case 'n': note_offset = 9; break;   // A
+        case 'j': note_offset = 10; break;  // A#
+        case 'm': note_offset = 11; break;  // B
+    }
+
+    // Upper octave row (q-u keys)
+    if (note_offset < 0) {
+        upper = 1;
+        switch (key) {
+            case 'q': note_offset = 0; break;   // C
+            case '2': note_offset = 1; break;   // C#
+            case 'w': note_offset = 2; break;   // D
+            case '3': note_offset = 3; break;   // D#
+            case 'e': note_offset = 4; break;   // E
+            case 'r': note_offset = 5; break;   // F
+            case '5': note_offset = 6; break;   // F#
+            case 'f': note_offset = 7; break;   // G  (using 'f' since 't' conflicts)
+            case '6': note_offset = 8; break;   // G#
+            case 'y': note_offset = 9; break;   // A
+            case '7': note_offset = 10; break;  // A#
+            case 'u': note_offset = 11; break;  // B
+        }
+    }
+
+    if (note_offset >= 0) {
+        // Release previous note if one is held
+        if (kb_last_note != 0xFF) {
+            midi_process_message(MIDI_NOTE_OFF, kb_last_note, 0);
+        }
+
+        // Calculate MIDI note number
+        uint8_t octave = kb_current_octave;
+        if (upper) octave++;
+        uint8_t midi_note = (octave * 12) + note_offset;
+
+        // Clamp to valid MIDI range
+        if (midi_note > 127) midi_note = 127;
+
+        // Send note-on
+        midi_process_message(MIDI_NOTE_ON, midi_note, kb_current_velocity);
+        kb_last_note = midi_note;
+        printf("Note: %d vel: %d\n", midi_note, kb_current_velocity);
+        return;
+    }
+
+    // Non-note keys
+    switch (key) {
+        case '[':  // Octave down
+            if (kb_current_octave > 0) {
+                kb_current_octave--;
+                printf("Octave: %d\n", kb_current_octave);
+            }
+            break;
+        case ']':  // Octave up
+            if (kb_current_octave < 9) {
+                kb_current_octave++;
+                printf("Octave: %d\n", kb_current_octave);
+            }
+            break;
+        case '-':  // Velocity down
+            if (kb_current_velocity > 10) {
+                kb_current_velocity -= 10;
+            } else {
+                kb_current_velocity = 1;
+            }
+            printf("Velocity: %d\n", kb_current_velocity);
+            break;
+        case '=':  // Velocity up
+            if (kb_current_velocity < 118) {
+                kb_current_velocity += 10;
+            } else {
+                kb_current_velocity = 127;
+            }
+            printf("Velocity: %d\n", kb_current_velocity);
+            break;
+        case ' ':  // Space = note off (release current note)
+            if (kb_last_note != 0xFF) {
+                midi_process_message(MIDI_NOTE_OFF, kb_last_note, 0);
+                printf("Note off: %d\n", kb_last_note);
+                kb_last_note = 0xFF;
+            }
+            break;
+        case '/':  // Panic
+            if (kb_last_note != 0xFF) {
+                midi_process_message(MIDI_NOTE_OFF, kb_last_note, 0);
+                kb_last_note = 0xFF;
+            }
+            synthesizer_panic();
+            break;
     }
 }
 
@@ -135,11 +311,15 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                             current_chip->note_off(voice);
                         }
                     }
+                    if (midi_mode == MIDI_MODE_BIOS)
+                        printf("MIDI IN: Note Off %d\n", data1);
                 } else {
                     uint8_t voice = allocate_voice(data1, data2, channel);
                     if (voice != 0xFF) {
                         current_chip->note_on(voice, data1, data2, channel);
                     }
+                    if (midi_mode == MIDI_MODE_BIOS)
+                        printf("MIDI IN: Note On %d vel %d\n", data1, data2);
                 }
             }
             break;
@@ -151,6 +331,8 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                     current_chip->note_off(voice);
                 }
             }
+            if (midi_mode == MIDI_MODE_BIOS)
+                printf("MIDI IN: Note Off %d\n", data1);
             break;
             
         case MIDI_CONTROL_CHANGE:

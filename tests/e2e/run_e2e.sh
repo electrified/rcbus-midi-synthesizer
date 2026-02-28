@@ -74,7 +74,9 @@ TEST_TIMEOUT="${TEST_TIMEOUT:-300}"
 BUILD=true
 HEADLESS=false
 SERIAL_PORT="${SERIAL_PORT:-}"      # empty → auto-detect a free port
+MIDI_PORT="${MIDI_PORT:-}"          # empty → auto-detect a free port (for AUX/MIDI)
 RS232_SLOT="${RS232_SLOT:-}"        # empty → auto-discover via mame -listslots
+RS232_SLOT_B="${RS232_SLOT_B:-}"    # empty → auto-discover rs232b via mame -listslots
 LIST_SLOTS=false
 
 # ---------------------------------------------------------------------------
@@ -90,8 +92,12 @@ while [[ $# -gt 0 ]]; do
         --mame=*)           MAME_CMD="${1#*=}" ;;
         --serial-port)      SERIAL_PORT="$2"; shift ;;
         --serial-port=*)    SERIAL_PORT="${1#*=}" ;;
+        --midi-port)        MIDI_PORT="$2"; shift ;;
+        --midi-port=*)      MIDI_PORT="${1#*=}" ;;
         --rs232-slot)       RS232_SLOT="$2"; shift ;;
         --rs232-slot=*)     RS232_SLOT="${1#*=}" ;;
+        --rs232-slot-b)     RS232_SLOT_B="$2"; shift ;;
+        --rs232-slot-b=*)   RS232_SLOT_B="${1#*=}" ;;
         --list-slots)       LIST_SLOTS=true ;;
         -h|--help)
             sed -n '/^# /p' "$0" | sed 's/^# \?//'
@@ -244,9 +250,30 @@ if [[ -z "$RS232_SLOT" ]]; then
         warn "  --rs232-slot <SLOT_NAME>"
         fail "RS232 slot discovery failed — cannot configure null-modem socket."
     fi
-    info "Detected RS232 slot: $RS232_SLOT"
+    info "Detected RS232 slot (console): $RS232_SLOT"
 else
-    info "Using supplied RS232 slot: $RS232_SLOT"
+    info "Using supplied RS232 slot (console): $RS232_SLOT"
+fi
+
+# Discover rs232b (AUX/MIDI port) — same SIO board, port B
+discover_rs232b_slot() {
+    local machine="rc2014zedp"
+    "$MAME_CMD" "$machine" -listslots 2>/dev/null \
+    | grep -oP 'bus:\S*rs232b' \
+    | head -1
+}
+
+if [[ -z "$RS232_SLOT_B" ]]; then
+    info "Auto-detecting RS232 slot B (MIDI/AUX) for rc2014zedp…"
+    RS232_SLOT_B="$(discover_rs232b_slot)"
+    if [[ -z "$RS232_SLOT_B" ]]; then
+        warn "Could not auto-detect RS232 slot B (MIDI)."
+        warn "BIOS MIDI tests will be skipped."
+    else
+        info "Detected RS232 slot B (MIDI): $RS232_SLOT_B"
+    fi
+else
+    info "Using supplied RS232 slot B (MIDI): $RS232_SLOT_B"
 fi
 echo ""
 
@@ -261,15 +288,39 @@ s.bind(('', 0))
 print(s.getsockname()[1])
 s.close()
 ")
-    info "Auto-selected TCP port: $SERIAL_PORT"
+    info "Auto-selected TCP port (console): $SERIAL_PORT"
 else
-    info "Using supplied TCP port: $SERIAL_PORT"
+    info "Using supplied TCP port (console): $SERIAL_PORT"
+fi
+
+# Pick a free TCP port for the MIDI serial port (if rs232b was found)
+if [[ -n "$RS232_SLOT_B" ]]; then
+    if [[ -z "$MIDI_PORT" ]]; then
+        MIDI_PORT=$(python3 -c "
+import socket
+s = socket.socket()
+s.bind(('', 0))
+print(s.getsockname()[1])
+s.close()
+")
+        info "Auto-selected TCP port (MIDI): $MIDI_PORT"
+    else
+        info "Using supplied TCP port (MIDI): $MIDI_PORT"
+    fi
+else
+    MIDI_PORT=0
+    info "No MIDI serial port (rs232b not available)"
 fi
 echo ""
 
 # ---------------------------------------------------------------------------
 # Step 6: Build the MAME command line
 # ---------------------------------------------------------------------------
+# MAME bitbanger naming rules for null_modem devices:
+#   - 1 null_modem device  → media option is -bitb
+#   - 2 null_modem devices → media options are -bitb1 (first) and -bitb2 (second)
+# We must account for this when configuring the console and MIDI ports.
+
 MAME_ARGS=(
     rc2014zedp
     -bus:5  cf
@@ -278,10 +329,23 @@ MAME_ARGS=(
     -nothrottle
     -skip_gameinfo
     -autoboot_script "$SCRIPT_DIR/mame_test.lua"
-    # Wire the emulated serial port to a TCP socket via null-modem device
+    # Wire the emulated console serial port to a TCP socket via null-modem device
     "-${RS232_SLOT}" null_modem
-    -bitb "socket.127.0.0.1:${SERIAL_PORT}"
 )
+
+if [[ -n "$RS232_SLOT_B" && "$MIDI_PORT" -gt 0 ]]; then
+    # Two null_modem devices: first gets -bitb1, second gets -bitb2
+    MAME_ARGS+=(-bitb1 "socket.127.0.0.1:${SERIAL_PORT}")
+    MAME_ARGS+=(
+        "-${RS232_SLOT_B}" null_modem
+        -bitb2 "socket.127.0.0.1:${MIDI_PORT}"
+    )
+    info "Console    : ${RS232_SLOT} → TCP ${SERIAL_PORT} (bitb1)"
+    info "MIDI port  : ${RS232_SLOT_B} → TCP ${MIDI_PORT} (bitb2)"
+else
+    # Single null_modem device: uses -bitb
+    MAME_ARGS+=(-bitb "socket.127.0.0.1:${SERIAL_PORT}")
+fi
 
 AUDIO_FILE="$RESULTS_DIR/audio.wav"
 rm -f "$AUDIO_FILE"
@@ -328,6 +392,7 @@ echo "--- serial output begin ---"
 
 SERIAL_HOST=127.0.0.1 \
 SERIAL_PORT="$SERIAL_PORT" \
+MIDI_PORT="$MIDI_PORT" \
 RESULTS_DIR="$RESULTS_DIR" \
 MAME_PID=0 \
 CONNECT_TIMEOUT=90 \

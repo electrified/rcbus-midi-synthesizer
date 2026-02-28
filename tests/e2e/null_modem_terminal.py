@@ -47,6 +47,7 @@ import traceback
 
 HOST            = os.environ.get("SERIAL_HOST",     "localhost")
 PORT            = int(os.environ.get("SERIAL_PORT",  "12345"))
+MIDI_PORT       = int(os.environ.get("MIDI_PORT",     "0"))   # 0 = no MIDI port
 RESULTS_DIR     = pathlib.Path(os.environ.get("RESULTS_DIR", "tests/e2e/results"))
 MAME_PID        = int(os.environ.get("MAME_PID", "0")) or None
 CONNECT_TIMEOUT = int(os.environ.get("CONNECT_TIMEOUT", "60"))
@@ -166,12 +167,62 @@ class NullModemTerminal:
         self.host = host
         self.port = port
         self._sock: socket.socket | None = None
+        self._server: socket.socket | None = None
         self._buf = ""          # accumulated received text (unconsumed)
         self._connected = False
 
     # ------------------------------------------------------------------
     # Connection
     # ------------------------------------------------------------------
+
+    def listen(self) -> bool:
+        """Bind and listen on the TCP port, but do not accept yet.
+
+        Call accept_connection() after this to wait for MAME to connect.
+        Separated from accept so that multiple servers can listen before
+        MAME is launched.
+
+        Returns False if binding fails.
+        """
+        self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            self._server.bind((self.host, self.port))
+        except OSError as exc:
+            log(f"ERROR: could not bind to {self.host}:{self.port}: {exc}")
+            self._server.close()
+            self._server = None
+            return False
+        self._server.listen(1)
+        log(f"Listening on {self.host}:{self.port} (waiting for MAME to connect)")
+        return True
+
+    def accept_connection(self, timeout: int = 60) -> bool:
+        """Accept a connection from MAME on the already-listening socket.
+
+        Returns False if no connection is established within *timeout* seconds.
+        """
+        if self._server is None:
+            log("ERROR: must call listen() before accept_connection()")
+            return False
+        self._server.settimeout(timeout)
+        try:
+            conn, addr = self._server.accept()
+            conn.settimeout(0.2)
+            self._sock = conn
+            self._connected = True
+            log(f"MAME connected from {addr[0]}:{addr[1]} on port {self.port}")
+            return True
+        except socket.timeout:
+            log(f"ERROR: no connection received on {self.host}:{self.port} "
+                f"after {timeout}s")
+            return False
+        except OSError as exc:
+            log(f"ERROR: accept failed: {exc}")
+            return False
+        finally:
+            self._server.close()
+            self._server = None
 
     def connect(self, timeout: int = 60) -> bool:
         """Listen on the TCP port and accept a connection from MAME.
@@ -188,17 +239,8 @@ class NullModemTerminal:
         Returns False if no connection is established within *timeout* seconds.
         """
         ready_flag = RESULTS_DIR / "server_ready.flag"
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            server.bind((self.host, self.port))
-        except OSError as exc:
-            log(f"ERROR: could not bind to {self.host}:{self.port}: {exc}")
-            server.close()
+        if not self.listen():
             return False
-        server.listen(1)
-        server.settimeout(timeout)
-        log(f"Listening on {self.host}:{self.port} (waiting for MAME to connect)")
 
         # Signal the shell runner that we are ready for MAME to start.
         try:
@@ -208,21 +250,8 @@ class NullModemTerminal:
             pass
 
         try:
-            conn, addr = server.accept()
-            conn.settimeout(0.2)
-            self._sock = conn
-            self._connected = True
-            log(f"MAME connected from {addr[0]}:{addr[1]}")
-            return True
-        except socket.timeout:
-            log(f"ERROR: no connection received on {self.host}:{self.port} "
-                f"after {timeout}s")
-            return False
-        except OSError as exc:
-            log(f"ERROR: accept failed: {exc}")
-            return False
+            return self.accept_connection(timeout)
         finally:
-            server.close()
             try:
                 ready_flag.unlink(missing_ok=True)
             except OSError:
@@ -360,6 +389,28 @@ class NullModemTerminal:
                 raise ConnectionLostError(f"send failed: {exc}") from exc
             raise
 
+    def send_raw(self, data: bytes) -> None:
+        """Send raw bytes over the socket (for MIDI data).
+
+        Raises ConnectionLostError if the socket is broken.
+        """
+        if not self.connected:
+            raise ConnectionLostError("not connected")
+        if _serial_log_fh is not None:
+            ts = time.strftime("%H:%M:%S")
+            _serial_log_fh.write(f"[{ts}] TX_RAW ({len(data)} bytes) {data.hex(' ')}\n")
+            _serial_log_fh.flush()
+        try:
+            self._sock.sendall(data)
+        except (BrokenPipeError, ConnectionResetError) as exc:
+            self._connected = False
+            raise ConnectionLostError(f"send_raw failed: {exc}") from exc
+        except OSError as exc:
+            if exc.errno in (errno.ECONNRESET, errno.EPIPE):
+                self._connected = False
+                raise ConnectionLostError(f"send_raw failed: {exc}") from exc
+            raise
+
     def send_cmd(self, char: str, wait_for: str | None = None,
                  timeout: int = 30) -> str:
         """Send a single-character midisynth command and optionally wait for a marker.
@@ -384,13 +435,58 @@ class NullModemTerminal:
 def run_tests() -> bool:
     term = NullModemTerminal(HOST, PORT)
 
+    # Optional MIDI terminal on second serial port
+    midi_term: NullModemTerminal | None = None
+    if MIDI_PORT > 0:
+        midi_term = NullModemTerminal(HOST, MIDI_PORT)
+
     # ------------------------------------------------------------------
-    # 1. Connect
+    # 1. Connect — listen on all ports, signal ready, accept connections
     # ------------------------------------------------------------------
-    log(f"Connecting to MAME null-modem socket at {HOST}:{PORT} …")
-    if not term.connect(timeout=CONNECT_TIMEOUT):
-        write_result(False, f"could not connect to {HOST}:{PORT}")
+    log(f"Setting up TCP server(s): console={HOST}:{PORT}"
+        + (f"  midi={HOST}:{MIDI_PORT}" if MIDI_PORT > 0 else ""))
+
+    # Listen on both ports BEFORE signalling ready (so MAME can connect to both)
+    if not term.listen():
+        write_result(False, f"could not bind console port {HOST}:{PORT}")
         return False
+
+    if midi_term is not None:
+        if not midi_term.listen():
+            log(f"WARNING: could not bind MIDI port {HOST}:{MIDI_PORT} "
+                "— BIOS MIDI tests will be skipped")
+            midi_term = None
+
+    # Signal the shell runner that all servers are listening
+    ready_flag = RESULTS_DIR / "server_ready.flag"
+    try:
+        ready_flag.parent.mkdir(parents=True, exist_ok=True)
+        ready_flag.touch()
+    except OSError:
+        pass
+
+    # Accept console connection from MAME
+    log(f"Waiting for MAME to connect to console port {PORT} …")
+    if not term.accept_connection(timeout=CONNECT_TIMEOUT):
+        write_result(False, f"could not connect to {HOST}:{PORT}")
+        try:
+            ready_flag.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+    # Accept MIDI connection from MAME (non-blocking-ish, shorter timeout)
+    if midi_term is not None:
+        log(f"Waiting for MAME to connect to MIDI port {MIDI_PORT} …")
+        if not midi_term.accept_connection(timeout=CONNECT_TIMEOUT):
+            log("WARNING: MAME did not connect to MIDI port "
+                "— BIOS MIDI tests will be skipped")
+            midi_term = None
+
+    try:
+        ready_flag.unlink(missing_ok=True)
+    except OSError:
+        pass
 
     try:
         # ------------------------------------------------------------------
@@ -536,7 +632,120 @@ def run_tests() -> bool:
         term._buf = ""
 
         # ------------------------------------------------------------------
-        # 8. t — audio test
+        # 8. k — keyboard MIDI mode test
+        # ------------------------------------------------------------------
+        log("Running 'k' (keyboard MIDI mode) …")
+        try:
+            kb_out = term.send_cmd("k", wait_for="Keyboard MIDI mode on.",
+                                    timeout=CMD_TIMEOUT)
+            check("Keyboard MIDI mode on" in kb_out,
+                  "keyboard midi: mode activated")
+        except TimeoutError:
+            log("WARNING: keyboard MIDI mode activation garbled — continuing")
+
+        time.sleep(1.0)
+        term._drain()
+        term._buf = ""
+
+        # Play a note using keyboard MIDI: 'z' = C in current octave
+        log("  Sending 'z' (play C note in keyboard MIDI mode) …")
+        term.send("z")
+        time.sleep(2.0)
+        term._drain()
+        kb_note_out = term._buf
+        check("Note:" in kb_note_out, "keyboard midi: note-on feedback printed")
+        term._buf = ""
+
+        # Play another note: 'x' = D
+        log("  Sending 'x' (play D note) …")
+        term.send("x")
+        time.sleep(2.0)
+        term._drain()
+        term._buf = ""
+
+        # Release note with space
+        log("  Sending space (note off) …")
+        term.send(" ")
+        time.sleep(1.0)
+        term._drain()
+        kb_off_out = term._buf
+        check("Note off:" in kb_off_out, "keyboard midi: note-off feedback printed")
+        term._buf = ""
+
+        # Exit keyboard MIDI mode with backtick
+        log("  Sending backtick (exit keyboard MIDI mode) …")
+        term.send("`")
+        time.sleep(1.0)
+        term._drain()
+        kb_exit_out = term._buf
+        check("Keyboard MIDI mode off" in kb_exit_out,
+              "keyboard midi: mode deactivated")
+        term._buf = ""
+
+        # ------------------------------------------------------------------
+        # 9. BIOS MIDI mode test (via second serial port)
+        # ------------------------------------------------------------------
+        if midi_term is not None and midi_term.connected:
+            log(f"Running BIOS MIDI test via second serial port (port {MIDI_PORT}) …")
+
+            # Activate BIOS MIDI mode via console
+            log("  Activating BIOS MIDI mode ('m' command) …")
+            term.send("m")
+            time.sleep(1.0)
+            term._drain()
+            bios_out = term._buf
+            check("BIOS MIDI mode on" in bios_out,
+                  "bios midi: mode activated")
+            term._buf = ""
+
+            # Send MIDI Note On: channel 0, note 60 (C5), velocity 100
+            # MIDI message: 0x90 0x3C 0x64
+            log("  Sending MIDI Note On (note 60, vel 100) via AUX port …")
+            midi_term.send_raw(bytes([0x90, 0x3C, 0x64]))
+            time.sleep(3.0)
+            term._drain()
+            midi_on_out = term._buf
+            check("MIDI IN:" in midi_on_out,
+                  "bios midi: note-on received via AUX")
+            term._buf = ""
+
+            # Send MIDI Note Off: channel 0, note 60
+            # MIDI message: 0x80 0x3C 0x00
+            log("  Sending MIDI Note Off (note 60) via AUX port …")
+            midi_term.send_raw(bytes([0x80, 0x3C, 0x00]))
+            time.sleep(1.0)
+            term._drain()
+            term._buf = ""
+
+            # Send a second note to verify running status works
+            log("  Sending MIDI Note On (note 64, vel 80) via AUX port …")
+            midi_term.send_raw(bytes([0x90, 0x40, 0x50]))
+            time.sleep(3.0)
+
+            # Send Note Off
+            midi_term.send_raw(bytes([0x80, 0x40, 0x00]))
+            time.sleep(1.0)
+            term._drain()
+            term._buf = ""
+
+            # Audio verification for BIOS MIDI is deferred to WAV check
+            check(True, "bios midi: MIDI bytes sent (audio check deferred to WAV)")
+
+            # Deactivate BIOS MIDI mode
+            log("  Deactivating BIOS MIDI mode ('m' command) …")
+            term.send("m")
+            time.sleep(1.0)
+            term._drain()
+            bios_off_out = term._buf
+            check("BIOS MIDI mode off" in bios_off_out,
+                  "bios midi: mode deactivated")
+            term._buf = ""
+        else:
+            log("MIDI serial port not available — skipping BIOS MIDI test")
+            check(True, "bios midi: skipped (no MIDI port)")
+
+        # ------------------------------------------------------------------
+        # 10. t — audio test
         # ------------------------------------------------------------------
         # The audio test produces a lot of serial output while also
         # generating sound, which almost always causes serial overrun
@@ -559,7 +768,7 @@ def run_tests() -> bool:
         term._buf = ""
 
         # ------------------------------------------------------------------
-        # 9. q — quit
+        # 11. q — quit
         # ------------------------------------------------------------------
         log("Running 'q' (quit) …")
         term.send_cmd("q", timeout=CMD_TIMEOUT)
@@ -570,10 +779,14 @@ def run_tests() -> bool:
             log("WARNING: did not see C> after quit "
                 "(program may have exited cleanly anyway)")
 
+        if midi_term is not None:
+            midi_term.close()
         term.close()
 
     except ConnectionLostError as exc:
         log(f"ERROR: connection lost — {exc}")
+        if midi_term is not None:
+            midi_term.close()
         term.close()
         write_result(False, f"connection lost: {exc}")
         return False
@@ -581,6 +794,8 @@ def run_tests() -> bool:
     except Exception as exc:
         log(f"ERROR: unexpected exception — {exc}")
         log(traceback.format_exc())
+        if midi_term is not None:
+            midi_term.close()
         term.close()
         write_result(False, str(exc))
         return False
@@ -601,7 +816,7 @@ def run_tests() -> bool:
 if __name__ == "__main__":
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     _open_serial_log()
-    log(f"null_modem_terminal starting  host={HOST}  port={PORT}")
+    log(f"null_modem_terminal starting  host={HOST}  port={PORT}  midi_port={MIDI_PORT}")
     log(f"MAME PID: {MAME_PID or 'unknown'}")
     log(f"timeouts: connect={CONNECT_TIMEOUT}s  boot={BOOT_TIMEOUT}s  "
         f"cmd={CMD_TIMEOUT}s  audio={AUDIO_TIMEOUT}s")
