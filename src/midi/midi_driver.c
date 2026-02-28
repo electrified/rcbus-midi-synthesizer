@@ -16,48 +16,37 @@ static uint8_t kb_current_octave = 5;    // Default octave (C5 = MIDI 60)
 static uint8_t kb_current_velocity = 100; // Default velocity
 static uint8_t kb_last_note = 0xFF;       // Last note played (for note-off)
 
-// RomWBW HBIOS helpers for auxiliary serial port (unit 1 = COM1/AUX).
+// Direct Z80-SIO hardware I/O for auxiliary serial port (Channel B).
 //
-// HBIOS is invoked via RST 08H with function code in B and unit in C.
-// Standard CP/M 2.2 BIOS has no AUXIST vector, and the previous code
-// used wrong offsets (+18=PUNCH, +15=LIST — both OUTPUT functions).
-// Using HBIOS directly is the correct approach for RomWBW systems.
+// HBIOS RST 08H was found to corrupt CP/M console I/O state, so we
+// bypass HBIOS entirely and read the SIO registers directly.
 //
-// HBIOS character I/O functions:
-//   B=0x00  CIOIN   — character input  (blocking), returns char in E
-//   B=0x02  CIOIST  — input status, returns count in A (0=none)
+// RC2014 Z80-SIO port map (base 0x80):
+//   0x80 = Channel A data    0x81 = Channel A control
+//   0x82 = Channel B data    0x83 = Channel B control
+//
+// RR0 bit 0 = Rx Character Available.
+// Writing 0x00 to the control port selects RR0 for the next read.
 
-#define HBIOS_CIOIN   0
-#define HBIOS_CIOIST  2
-#define HBIOS_AUX_UNIT 1   /* COM1 / SIO Channel B */
-
-// Call HBIOS CIOIST — returns 0 if no char available, non-zero if available
-static uint8_t bios_auxist(void) {
-    uint8_t result;
+// Check SIO Channel B Rx status — returns 0 if empty, 1 if data available
+static uint8_t bios_auxist(void) __naked {
     __asm
-        push iy             ; save frame pointer (HBIOS may clobber)
-        ld b, 2             ; HBIOS CIOIST (char input status)
-        ld c, 1             ; unit 1 (COM1 / AUX)
-        rst 8               ; HBIOS entry point
-        pop iy              ; restore frame pointer
-        ld l, a             ; return count in L (0 = nothing, >0 = available)
+        xor a               ; A = 0 → select RR0
+        out (0x83), a       ; SIO Ch.B control: point to RR0
+        in a, (0x83)        ; read RR0
+        and 1               ; isolate bit 0 (Rx Char Available)
+        ld l, a             ; return in L
+        ret
     __endasm;
-    // z88dk sdcc_iy returns uint8_t in L
-    (void)result;  // suppress warning; value returned via L register
 }
 
-// Call HBIOS CIOIN — returns byte from auxiliary device (blocking)
-static uint8_t bios_auxin(void) {
-    uint8_t result;
+// Read one byte from SIO Channel B data register
+static uint8_t bios_auxin(void) __naked {
     __asm
-        push iy             ; save frame pointer (HBIOS may clobber)
-        ld b, 0             ; HBIOS CIOIN (char input, blocking)
-        ld c, 1             ; unit 1 (COM1 / AUX)
-        rst 8               ; HBIOS entry point
-        pop iy              ; restore frame pointer
-        ld l, e             ; HBIOS returns character in E
+        in a, (0x82)        ; read SIO Ch.B data register
+        ld l, a             ; return in L
+        ret
     __endasm;
-    (void)result;
 }
 
 // Initialize MIDI driver
