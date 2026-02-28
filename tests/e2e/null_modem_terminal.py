@@ -704,6 +704,9 @@ def run_tests() -> bool:
             midi_term.send_raw(bytes([0x90, 0x3C, 0x64]))
             time.sleep(3.0)
             term._drain()
+            midi_on_out = term._buf
+            check("MIDI IN:" in midi_on_out,
+                  "bios midi: note-on received via AUX")
             term._buf = ""
 
             # Send MIDI Note Off: channel 0, note 60

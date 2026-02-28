@@ -35,9 +35,11 @@ static uint8_t kb_last_note = 0xFF;       // Last note played (for note-off)
 static uint8_t bios_auxist(void) {
     uint8_t result;
     __asm
+        push iy             ; save frame pointer (HBIOS may clobber)
         ld b, 2             ; HBIOS CIOIST (char input status)
         ld c, 1             ; unit 1 (COM1 / AUX)
         rst 8               ; HBIOS entry point
+        pop iy              ; restore frame pointer
         ld l, a             ; return count in L (0 = nothing, >0 = available)
     __endasm;
     // z88dk sdcc_iy returns uint8_t in L
@@ -48,9 +50,11 @@ static uint8_t bios_auxist(void) {
 static uint8_t bios_auxin(void) {
     uint8_t result;
     __asm
+        push iy             ; save frame pointer (HBIOS may clobber)
         ld b, 0             ; HBIOS CIOIN (char input, blocking)
         ld c, 1             ; unit 1 (COM1 / AUX)
         rst 8               ; HBIOS entry point
+        pop iy              ; restore frame pointer
         ld l, e             ; HBIOS returns character in E
     __endasm;
     (void)result;
@@ -116,12 +120,15 @@ uint8_t midi_driver_read_byte(void) {
     return bios_auxin();
 }
 
-// Process all available MIDI input
+// Process one pending MIDI byte (if available).
+// Only one byte per call so the main loop always returns to kbhit()
+// for console command processing.  At 7.3 MHz the loop iterates fast
+// enough to keep up with 31250-baud MIDI (≈3125 bytes/sec).
 void midi_driver_process_input(void) {
     if (midi_mode != MIDI_MODE_BIOS) {
         return;
     }
-    while (midi_driver_available()) {
+    if (midi_driver_available()) {
         uint8_t byte = midi_driver_read_byte();
         midi_process_byte(byte);
     }
@@ -315,11 +322,15 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                             current_chip->note_off(voice);
                         }
                     }
+                    if (midi_mode == MIDI_MODE_BIOS)
+                        printf("MIDI IN: Note Off %d\n", data1);
                 } else {
                     uint8_t voice = allocate_voice(data1, data2, channel);
                     if (voice != 0xFF) {
                         current_chip->note_on(voice, data1, data2, channel);
                     }
+                    if (midi_mode == MIDI_MODE_BIOS)
+                        printf("MIDI IN: Note On %d vel %d\n", data1, data2);
                 }
             }
             break;
@@ -331,6 +342,8 @@ void midi_process_message(uint8_t status, uint8_t data1, uint8_t data2) {
                     current_chip->note_off(voice);
                 }
             }
+            if (midi_mode == MIDI_MODE_BIOS)
+                printf("MIDI IN: Note Off %d\n", data1);
             break;
             
         case MIDI_CONTROL_CHANGE:
