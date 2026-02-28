@@ -316,6 +316,11 @@ echo ""
 # ---------------------------------------------------------------------------
 # Step 6: Build the MAME command line
 # ---------------------------------------------------------------------------
+# MAME bitbanger naming rules for null_modem devices:
+#   - 1 null_modem device  → media option is -bitb
+#   - 2 null_modem devices → media options are -bitb1 (first) and -bitb2 (second)
+# We must account for this when configuring the console and MIDI ports.
+
 MAME_ARGS=(
     rc2014zedp
     -bus:5  cf
@@ -326,19 +331,20 @@ MAME_ARGS=(
     -autoboot_script "$SCRIPT_DIR/mame_test.lua"
     # Wire the emulated console serial port to a TCP socket via null-modem device
     "-${RS232_SLOT}" null_modem
-    -bitb "socket.127.0.0.1:${SERIAL_PORT}"
 )
 
-# Wire the second serial port (AUX/MIDI) if available.
-# MAME assigns bitbanger media mount names sequentially: -bitb for the first
-# null_modem device, -bitb1 for the second.  Since rs232a (console) is
-# instantiated first, it uses -bitb and rs232b (MIDI) uses -bitb1.
 if [[ -n "$RS232_SLOT_B" && "$MIDI_PORT" -gt 0 ]]; then
+    # Two null_modem devices: first gets -bitb1, second gets -bitb2
+    MAME_ARGS+=(-bitb1 "socket.127.0.0.1:${SERIAL_PORT}")
     MAME_ARGS+=(
         "-${RS232_SLOT_B}" null_modem
-        -bitb1 "socket.127.0.0.1:${MIDI_PORT}"
+        -bitb2 "socket.127.0.0.1:${MIDI_PORT}"
     )
-    info "MIDI port  : ${RS232_SLOT_B} → TCP ${MIDI_PORT}"
+    info "Console    : ${RS232_SLOT} → TCP ${SERIAL_PORT} (bitb1)"
+    info "MIDI port  : ${RS232_SLOT_B} → TCP ${MIDI_PORT} (bitb2)"
+else
+    # Single null_modem device: uses -bitb
+    MAME_ARGS+=(-bitb "socket.127.0.0.1:${SERIAL_PORT}")
 fi
 
 AUDIO_FILE="$RESULTS_DIR/audio.wav"
