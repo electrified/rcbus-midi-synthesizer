@@ -16,46 +16,44 @@ static uint8_t kb_current_octave = 5;    // Default octave (C5 = MIDI 60)
 static uint8_t kb_current_velocity = 100; // Default velocity
 static uint8_t kb_last_note = 0xFF;       // Last note played (for note-off)
 
-// CP/M BIOS call helpers for auxiliary serial port
-// The BIOS jump table starts at (WBOOT_addr - 3).
-// AUXIST (aux input status) = BIOS_BASE + 18  (vector 6 * 3)
-// AUXIN  (aux input byte)   = BIOS_BASE + 15  (vector 5 * 3)
+// RomWBW HBIOS helpers for auxiliary serial port (unit 1 = COM1/AUX).
+//
+// HBIOS is invoked via RST 08H with function code in B and unit in C.
+// Standard CP/M 2.2 BIOS has no AUXIST vector, and the previous code
+// used wrong offsets (+18=PUNCH, +15=LIST — both OUTPUT functions).
+// Using HBIOS directly is the correct approach for RomWBW systems.
+//
+// HBIOS character I/O functions:
+//   B=0x00  CIOIN   — character input  (blocking), returns char in E
+//   B=0x02  CIOIST  — input status, returns count in A (0=none)
 
-// Call BIOS AUXIST — returns 0xFF if char available, 0x00 if not
+#define HBIOS_CIOIN   0
+#define HBIOS_CIOIST  2
+#define HBIOS_AUX_UNIT 1   /* COM1 / SIO Channel B */
+
+// Call HBIOS CIOIST — returns 0 if no char available, non-zero if available
 static uint8_t bios_auxist(void) {
     uint8_t result;
-    // Read WBOOT vector from address 0x0001, subtract 3 to get BIOS base,
-    // add 18 to get AUXIST entry point, then call it.
     __asm
-        ld hl, (1)          ; WBOOT vector
-        ld de, -3+18        ; offset: -3 (base) + 18 (AUXIST)
-        add hl, de
-        call _bios_call_hl
-        ld l, a
+        ld b, 2             ; HBIOS CIOIST (char input status)
+        ld c, 1             ; unit 1 (COM1 / AUX)
+        rst 8               ; HBIOS entry point
+        ld l, a             ; return count in L (0 = nothing, >0 = available)
     __endasm;
     // z88dk sdcc_iy returns uint8_t in L
     (void)result;  // suppress warning; value returned via L register
 }
 
-// Call BIOS AUXIN — returns byte from auxiliary device (blocking)
+// Call HBIOS CIOIN — returns byte from auxiliary device (blocking)
 static uint8_t bios_auxin(void) {
     uint8_t result;
     __asm
-        ld hl, (1)          ; WBOOT vector
-        ld de, -3+15        ; offset: -3 (base) + 15 (AUXIN)
-        add hl, de
-        call _bios_call_hl
-        ld l, a
+        ld b, 0             ; HBIOS CIOIN (char input, blocking)
+        ld c, 1             ; unit 1 (COM1 / AUX)
+        rst 8               ; HBIOS entry point
+        ld l, e             ; HBIOS returns character in E
     __endasm;
     (void)result;
-}
-
-// Shared trampoline — called from asm above.
-// Located here so the linker can find it. Must not be static.
-void bios_call_hl(void) __naked {
-    __asm
-        jp (hl)
-    __endasm;
 }
 
 // Initialize MIDI driver
