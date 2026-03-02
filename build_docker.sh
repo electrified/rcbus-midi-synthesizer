@@ -3,8 +3,6 @@
 #
 # Usage:
 #   ./build_docker.sh          Build the full synthesizer
-#   ./build_docker.sh test     Build the minimal hardware test
-#   ./build_docker.sh all      Build both
 #
 # When run outside the container, this script launches Docker automatically.
 # When run inside the container (or if zcc is on PATH), it compiles directly.
@@ -78,45 +76,16 @@ build_synth() {
     ls -la MIDISYNTH.COM
 }
 
-build_test() {
-    echo "=== Building Minimal Hardware Test ==="
-
-    zcc +cpm -v -O2 \
-        test_minimal.c \
-        -create-app -o minimal_test
-
-    if [ -n "$HD_IMAGE" ] && command -v mkfs.cpm &>/dev/null; then
-        if [ ! -f "$HD_IMAGE" ]; then
-            create_disk_image
-        fi
-
-        local dest="${TEST_DEST:-0:mt.com}"
-        echo "Copying MINIMAL_TEST.COM to $HD_IMAGE as $dest..."
-        cpmrm -f wbw_hd512 "$HD_IMAGE" "$dest" 2>/dev/null || true
-        cpmcp -f wbw_hd512 "$HD_IMAGE" MINIMAL_TEST.COM "$dest"
-    fi
-
-    ls -la MINIMAL_TEST.COM
-}
-
 # Clean previous builds
 echo "Cleaning previous build artifacts..."
 rm -f *.com *.COM *.bin *.lst *.ihx *.hex *.map *.dsk
 
 case "${1:-synth}" in
-    test)
-        build_test
-        ;;
-    all)
-        build_synth
-        echo ""
-        build_test
-        ;;
     synth|"")
         build_synth
         ;;
     *)
-        echo "Usage: $0 [synth|test|all]"
+        echo "Usage: $0 [synth]"
         exit 1
         ;;
 esac
