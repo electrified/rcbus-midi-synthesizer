@@ -9,10 +9,6 @@
 *.map
 *.img
 
-# Test binaries
-hw_test
-tone_test
-test_simple
 
 # Test results (regenerated each run)
 tests/e2e/results/

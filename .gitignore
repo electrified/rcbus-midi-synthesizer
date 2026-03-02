@@ -15,10 +15,6 @@
 # Disk images
 *.img
 
-# Test binaries (no extension, built from test_*.c)
-hw_test
-tone_test
-test_simple
 
 
 # MAME ROM directory (created by E2E setup when run inside Docker)

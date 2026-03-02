@@ -80,15 +80,7 @@ build_synth() {
 echo "Cleaning previous build artifacts..."
 rm -f *.com *.COM *.bin *.lst *.ihx *.hex *.map *.dsk
 
-case "${1:-synth}" in
-    synth|"")
-        build_synth
-        ;;
-    *)
-        echo "Usage: $0 [synth]"
-        exit 1
-        ;;
-esac
+build_synth
 
 echo ""
 echo "MAME RC2014 example (with CF card + AY sound):"
