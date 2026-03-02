@@ -9,7 +9,6 @@ RC2014 Multi-Chip MIDI Synthesizer — a CP/M program for RC2014 Z80 systems tha
 ```bash
 # Docker build (recommended — no local z88dk needed)
 ./build_docker.sh          # builds midisynth.com and copies to cheese.img
-./build_docker.sh test     # builds the minimal hardware test (mt.com)
 
 # Build the Docker image (one-time, contains z88dk + MAME + cpmtools + sox)
 docker build -t rc2014-build .

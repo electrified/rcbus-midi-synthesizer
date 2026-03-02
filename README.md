@@ -113,16 +113,6 @@ data_port=0xD0
 
 Or press `r` at runtime to reload from file, and `i` to display the current ports.
 
-## Minimal Hardware Test
-
-A standalone test program (`test_minimal.c`) is included for verifying basic YM2149 I/O independently of the full synthesizer. It sweeps channel A pitch in a loop — if you hear descending tones, the chip and I/O ports are working.
-
-```bash
-./build_docker.sh test
-```
-
-Then run `A>mt` at the CP/M prompt.
-
 ## E2E Testing (MAME)
 
 Automated end-to-end tests run the synthesizer inside MAME's RC2014 emulation using a null-modem serial connection. The test suite boots RomWBW/CP/M, launches `midisynth`, exercises interactive commands (help, status, I/O ports, audio test), and verifies output over the serial link. Audio is recorded via MAME's `-wavwrite` and checked for non-silence.
@@ -214,8 +204,7 @@ include/
   midi_driver.h       — MIDI driver API and state structs
   ym2149.h            — YM2149 registers, voice extras, frequency defines
   port_config.h       — I/O port configuration
-test_minimal.c        — Standalone YM2149 I/O test
-build_docker.sh       — Docker-based build script (synth, test, or all)
+build_docker.sh       — Docker-based build script
 Makefile              — Local z88dk build
 tests/e2e/
   run_e2e.sh          — E2E test orchestrator

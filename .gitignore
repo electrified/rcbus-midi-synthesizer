@@ -17,7 +17,6 @@
 
 # Test binaries (no extension, built from test_*.c)
 hw_test
-minimal_test
 tone_test
 test_simple
 
