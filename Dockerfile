@@ -34,6 +34,7 @@ ARG Z88DK_VERSION=v2.4
 RUN apt-get update && apt-get install -y --no-install-recommends \
         # z88dk build dependencies (per https://github.com/z88dk/z88dk/wiki/installation)
         build-essential \
+        pkg-config \
         bison \
         flex \
         libxml2-dev \
