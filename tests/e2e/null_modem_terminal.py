@@ -702,31 +702,36 @@ def run_tests() -> bool:
             # MIDI message: 0x90 0x3C 0x64
             log("  Sending MIDI Note On (note 60, vel 100) via AUX port …")
             midi_term.send_raw(bytes([0x90, 0x3C, 0x64]))
-            time.sleep(3.0)
-            term._drain()
-            midi_on_out = term._buf
-            check("MIDI IN:" in midi_on_out,
-                  "bios midi: note-on received via AUX")
-            term._buf = ""
+            try:
+                midi_on_out = term.wait_for("MIDI IN: Note On 60 vel 100", timeout=CMD_TIMEOUT)
+                check(True, "bios midi: note-on received via AUX")
+            except TimeoutError as exc:
+                log(f"ERROR: {exc}")
+                check(False, "bios midi: note-on received via AUX")
 
             # Send MIDI Note Off: channel 0, note 60
             # MIDI message: 0x80 0x3C 0x00
             log("  Sending MIDI Note Off (note 60) via AUX port …")
             midi_term.send_raw(bytes([0x80, 0x3C, 0x00]))
-            time.sleep(1.0)
-            term._drain()
-            term._buf = ""
+            try:
+                term.wait_for("MIDI IN: Note Off 60", timeout=CMD_TIMEOUT)
+            except TimeoutError:
+                pass # Non-critical if text is garbled, audio check is better
 
             # Send a second note to verify running status works
             log("  Sending MIDI Note On (note 64, vel 80) via AUX port …")
             midi_term.send_raw(bytes([0x90, 0x40, 0x50]))
-            time.sleep(3.0)
+            try:
+                term.wait_for("MIDI IN: Note On 64 vel 80", timeout=CMD_TIMEOUT)
+            except TimeoutError:
+                pass
 
             # Send Note Off
             midi_term.send_raw(bytes([0x80, 0x40, 0x00]))
-            time.sleep(1.0)
-            term._drain()
-            term._buf = ""
+            try:
+                term.wait_for("MIDI IN: Note Off 64", timeout=CMD_TIMEOUT)
+            except TimeoutError:
+                pass
 
             # Audio verification for BIOS MIDI is deferred to WAV check
             check(True, "bios midi: MIDI bytes sent (audio check deferred to WAV)")
