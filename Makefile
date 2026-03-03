@@ -23,6 +23,8 @@ $(COM_FILE): $(SOURCES)
 	$(CC) $(CFLAGS) -I$(INCDIR) $(SOURCES) $(LDFLAGS) -o $(OUTPUT)
 
 # Disk image targets
+# We use a conditional to avoid an empty target if HD_IMAGE is not set
+ifneq ($(HD_IMAGE),)
 $(HD_IMAGE):
 	@if [ -f "$(BLANK_HD_IMAGE)" ]; then \
 		echo "Creating disk image from RomWBW blank: $(HD_IMAGE)"; \
@@ -32,9 +34,12 @@ $(HD_IMAGE):
 		dd if=/dev/zero bs=512 count=16640 2>/dev/null | tr '\000' '\345' > "$(HD_IMAGE)"; \
 		mkfs.cpm -f wbw_hd512 "$(HD_IMAGE)"; \
 	fi
+endif
 
 image: $(COM_FILE) $(HD_IMAGE)
-	@if command -v cpmcp >/dev/null 2>&1; then \
+	@if [ -z "$(HD_IMAGE)" ]; then \
+		echo "No disk image specified (HD_IMAGE), skipping image copy"; \
+	elif command -v cpmcp >/dev/null 2>&1; then \
 		echo "Copying $(COM_FILE) to $(HD_IMAGE) as $(HD_DEST)..."; \
 		cpmrm -f wbw_hd512 "$(HD_IMAGE)" "$(HD_DEST)" 2>/dev/null || true; \
 		cpmcp -f wbw_hd512 "$(HD_IMAGE)" $(COM_FILE) "$(HD_DEST)"; \

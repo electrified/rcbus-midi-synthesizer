@@ -30,16 +30,13 @@ jobs:
 
       - name: E2E test
         run: |
-          cp dist/MIDISYNTH.COM MIDISYNTH.COM
+          # Use build_docker.sh to create the disk image, then run the E2E script
+          # inside the container to ensure MAME and other tools are available.
+          ./build_docker.sh image
           docker run --rm \
             -v "$(pwd):/workspace" -w /workspace \
             rc2014-build \
-            bash -c '
-              cp /opt/mame-roms/rc2014zedp/hd512_blank.img cheese.img &&
-              cpmcp -f wbw_hd512 cheese.img MIDISYNTH.COM 0:midisyn.com &&
-              cpmls -f wbw_hd512 cheese.img &&
-              ./tests/e2e/run_e2e.sh --no-build --headless
-            '
+            ./tests/e2e/run_e2e.sh --no-build --headless
         timeout-minutes: 10
 
       - name: Upload test results

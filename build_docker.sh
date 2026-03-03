@@ -1,23 +1,27 @@
 #!/bin/bash
-# Build script for RC2014 MIDI Synthesizer
+# Build script for RC2014 MIDI Synthesizer using Makefile
 #
 # Usage:
-#   ./build_docker.sh          Build the full synthesizer
+#   ./build_docker.sh [TARGETS] [VARIABLES]
+#
+# Examples:
+#   ./build_docker.sh          Build the full synthesizer and disk image
+#   ./build_docker.sh clean    Clean build artifacts
+#   ./build_docker.sh all      Build the binary only
+#   ./build_docker.sh image HD_IMAGE=test.img
 #
 # When run outside the container, this script launches Docker automatically.
-# When run inside the container (or if zcc is on PATH), it compiles directly.
+# When run inside the container (or if zcc is on PATH), it runs make.
 #
 # Environment variables:
-#   HD_IMAGE=<path>    Disk image to create/update (default: cheese.img, empty to skip)
+#   HD_IMAGE=<path>    Disk image to create/update (default: cheese.img)
 #   BUILD_IMAGE=<img>  Docker image to use (default: rc2014-build:latest)
 
 set -e
 
-HD_IMAGE="${HD_IMAGE-cheese.img}"
+# Maintain default from original script
+HD_IMAGE="${HD_IMAGE:-cheese.img}"
 BUILD_IMAGE="${BUILD_IMAGE:-rc2014-build:latest}"
-
-# Pre-formatted blank wbw_hd512 image from RomWBW (baked into Docker image)
-BLANK_HD_IMAGE="/opt/mame-roms/rc2014zedp/hd512_blank.img"
 
 # ---------------------------------------------------------------------------
 # Detect whether we are inside the build container (zcc on PATH) or on the
@@ -43,45 +47,21 @@ fi
 # From here on we are running inside the container (or a host with zcc).
 # ---------------------------------------------------------------------------
 
-create_disk_image() {
-    if [ -f "$BLANK_HD_IMAGE" ]; then
-        echo "Creating disk image from RomWBW blank: $HD_IMAGE"
-        cp "$BLANK_HD_IMAGE" "$HD_IMAGE"
-    else
-        echo "Creating blank wbw_hd512 disk image: $HD_IMAGE"
-        dd if=/dev/zero bs=512 count=16640 2>/dev/null | tr '\000' '\345' > "$HD_IMAGE"
-        mkfs.cpm -f wbw_hd512 "$HD_IMAGE"
-    fi
-}
-
-build_synth() {
+# Clean up any previous build artifacts if running the default build or clean/image
+if [ $# -eq 0 ]; then
+    echo "Cleaning previous build artifacts..."
+    make clean
     echo "=== Building MIDI Synthesizer ==="
+    make image HD_IMAGE="$HD_IMAGE"
+else
+    # Pass along arguments, ensuring HD_IMAGE is available as a variable
+    make "$@" HD_IMAGE="$HD_IMAGE"
+fi
 
-    zcc +cpm -v -SO3 -O3 --opt-code-size \
-        -Iinclude \
-        src/main.c src/core/synthesizer.c src/core/chip_manager.c src/midi/midi_driver.c src/chips/ym2149.c \
-        -create-app -o midisynth
-
-    if [ -n "$HD_IMAGE" ] && command -v mkfs.cpm &>/dev/null; then
-        if [ ! -f "$HD_IMAGE" ]; then
-            create_disk_image
-        fi
-
-        local dest="${HD_DEST:-0:midisyn.com}"
-        echo "Copying MIDISYNTH.COM to $HD_IMAGE as $dest..."
-        cpmrm -f wbw_hd512 "$HD_IMAGE" "$dest" 2>/dev/null || true
-        cpmcp -f wbw_hd512 "$HD_IMAGE" MIDISYNTH.COM "$dest"
-    fi
-
+if [ -f "MIDISYNTH.COM" ]; then
     ls -la MIDISYNTH.COM
-}
-
-# Clean previous builds
-echo "Cleaning previous build artifacts..."
-rm -f *.com *.COM *.bin *.lst *.ihx *.hex *.map *.dsk
-
-build_synth
+fi
 
 echo ""
 echo "MAME RC2014 example (with CF card + AY sound):"
-echo "  mame rc2014zedp -bus:5 cf -hard cheese.img -bus:12 ay_sound -window"
+echo "  mame rc2014zedp -bus:5 cf -hard ${HD_IMAGE} -bus:12 ay_sound -window"
