@@ -16,28 +16,36 @@ static uint8_t kb_current_octave = 5;    // Default octave (C5 = MIDI 60)
 static uint8_t kb_current_velocity = 100; // Default velocity
 static uint8_t kb_last_note = 0xFF;       // Last note played (for note-off)
 
-// BIOS-based serial I/O for auxiliary serial port (MIDI).
-// We use the CP/M BIOS jump table to call READER (index 7) for input
-// and AUXIST (index 18) for status check. RomWBW HBIOS provides these.
-// WBOOT is at 0x0001. Jump table entries are 3 bytes each.
+// Direct Z80-SIO hardware I/O for auxiliary serial port (Channel B).
+//
+// HBIOS RST 08H was found to corrupt CP/M console I/O state, so we
+// bypass HBIOS entirely and read the SIO registers directly.
+//
+// RC2014 Z80-SIO port map (base 0x80):
+//   0x80 = Channel A data    0x81 = Channel A control
+//   0x82 = Channel B data    0x83 = Channel B control
+//
+// RR0 bit 0 = Rx Character Available.
+// Writing 0x00 to the control port selects RR0 for the next read.
 
-// Check auxiliary serial status — returns 0 if empty, 0xFF if data available
+// Check SIO Channel B Rx status — returns 0 if empty, 1 if data available
 static uint8_t bios_auxist(void) __naked {
     __asm
-        ld hl,(0x0001)      ; Get WBOOT address
-        ld de, 51           ; Offset to AUXIST (index 18: 18*3 - 3 = 51)
-        add hl, de
-        jp (hl)             ; Jump to BIOS entry, returns status in A/L
+        xor a               ; A = 0 → select RR0
+        out (0x83), a       ; SIO Ch.B control: point to RR0
+        in a, (0x83)        ; read RR0
+        and 1               ; isolate bit 0 (Rx Char Available)
+        ld l, a             ; return in L
+        ret
     __endasm;
 }
 
-// Read one byte from auxiliary serial (READER)
+// Read one byte from SIO Channel B data register
 static uint8_t bios_auxin(void) __naked {
     __asm
-        ld hl,(0x0001)      ; Get WBOOT address
-        ld de, 18           ; Offset to READER (index 7: 7*3 - 3 = 18)
-        add hl, de
-        jp (hl)             ; Jump to BIOS entry, returns byte in A/L
+        in a, (0x82)        ; read SIO Ch.B data register
+        ld l, a             ; return in L
+        ret
     __endasm;
 }
 
@@ -101,13 +109,15 @@ uint8_t midi_driver_read_byte(void) {
     return bios_auxin();
 }
 
-// Process pending MIDI bytes (if available).
-// We process all available bytes to prevent hardware FIFO overruns.
+// Process one pending MIDI byte (if available).
+// Only one byte per call so the main loop always returns to kbhit()
+// for console command processing.  At 7.3 MHz the loop iterates fast
+// enough to keep up with 31250-baud MIDI (≈3125 bytes/sec).
 void midi_driver_process_input(void) {
     if (midi_mode != MIDI_MODE_BIOS) {
         return;
     }
-    while (midi_driver_available()) {
+    if (midi_driver_available()) {
         uint8_t byte = midi_driver_read_byte();
         midi_process_byte(byte);
     }
