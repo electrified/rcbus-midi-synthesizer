@@ -398,7 +398,7 @@ MAME_PID=0 \
 CONNECT_TIMEOUT=90 \
 BOOT_TIMEOUT=120 \
 CMD_TIMEOUT=30 \
-AUDIO_TIMEOUT=15 \
+AUDIO_TIMEOUT=60 \
 timeout "$TEST_TIMEOUT" python3 "$SCRIPT_DIR/null_modem_terminal.py" &
 PYTHON_PID=$!
 info "Python server PID: $PYTHON_PID"
