@@ -35,10 +35,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # z88dk build dependencies (per https://github.com/z88dk/z88dk/wiki/installation)
         build-essential \
         pkg-config \
+        gawk \
         bison \
         flex \
         libxml2-dev \
         libgmp-dev \
+        libboost-dev \
         zlib1g-dev \
         liblzo2-dev \
         m4 \
