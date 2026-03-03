@@ -39,6 +39,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         flex \
         libxml2-dev \
         libgmp-dev \
+        zlib1g-dev \
+        liblzo2-dev \
         m4 \
         dos2unix \
         texinfo \
@@ -65,7 +67,7 @@ RUN Z88DK_TARBALL="https://github.com/z88dk/z88dk/releases/download/${Z88DK_VERS
     export BUILD_SDCC=0 && \
     export BUILD_SDCC_HTTP=0 && \
     chmod +x build.sh && \
-    ./build.sh 2>&1 | tail -20 && \
+    ./build.sh && \
     mv /tmp/z88dk /opt/z88dk && \
     rm -f /tmp/z88dk.tgz
 

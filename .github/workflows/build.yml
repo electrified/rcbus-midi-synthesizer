@@ -30,8 +30,10 @@ jobs:
 
       - name: E2E test
         run: |
-          # Use build_docker.sh to create the disk image, then run the E2E script
-          # inside the container to ensure MAME and other tools are available.
+          # Ensure we start with a fresh disk image. Use build_docker.sh
+          # to build and populate it, then run the E2E script inside the
+          # container to ensure MAME and other tools are available.
+          rm -f cheese.img
           ./build_docker.sh image
           docker run --rm \
             -v "$(pwd):/workspace" -w /workspace \
