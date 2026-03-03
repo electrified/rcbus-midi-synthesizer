@@ -20,7 +20,9 @@
 set -e
 
 # Maintain default from original script
-HD_IMAGE="${HD_IMAGE:-cheese.img}"
+# Use ${VAR-DEFAULT} instead of ${VAR:-DEFAULT} so that an empty string
+# passed from the environment (like HD_IMAGE="") is respected.
+HD_IMAGE="${HD_IMAGE-cheese.img}"
 BUILD_IMAGE="${BUILD_IMAGE:-rc2014-build:latest}"
 
 # ---------------------------------------------------------------------------
