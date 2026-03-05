@@ -16,9 +16,13 @@ jobs:
       - name: Build Docker image
         run: docker build -t rc2014-build .
 
-      - name: Build with z88dk
+      - name: Compile with z88dk
         run: |
-          HD_IMAGE="" BUILD_IMAGE=rc2014-build ./build_docker.sh
+          docker run --rm -v "$(pwd):/src" -w /src z88dk/z88dk \
+            zcc +cpm -v -SO3 -O3 --opt-code-size -Iinclude \
+            src/main.c src/core/synthesizer.c src/core/chip_manager.c \
+            src/midi/midi_driver.c src/chips/ym2149.c \
+            -create-app -o midisynth
           mkdir -p dist
           cp MIDISYNTH.COM dist/MIDISYNTH.COM
 
@@ -31,10 +35,11 @@ jobs:
       - name: E2E test
         run: |
           # Ensure we start with a fresh disk image. Use build_docker.sh
-          # to build and populate it, then run the E2E script inside the
-          # container to ensure MAME and other tools are available.
+          # to populate it with the pre-compiled binary, then run the
+          # E2E script inside the container to ensure MAME and other
+          # tools are available.
           rm -f cheese.img
-          ./build_docker.sh image
+          HD_IMAGE="cheese.img" BUILD_IMAGE=rc2014-build ./build_docker.sh image
           docker run --rm \
             -v "$(pwd):/workspace" -w /workspace \
             rc2014-build \

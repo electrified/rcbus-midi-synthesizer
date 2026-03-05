@@ -1,51 +1,31 @@
 # Dockerfile — RC2014 MIDI Synthesizer build & test environment
 #
-# Contains everything needed to compile, package, and E2E-test the
-# synthesizer:
-#   - z88dk   (Z80 C cross-compiler, built from source)
+# Contains everything needed to package and E2E-test the synthesizer:
 #   - cpmtools (CP/M disk image manipulation)
 #   - MAME    (RC2014 emulation for E2E tests)
 #   - RomWBW  (ROM image + CP/M system tracks for MAME)
 #   - sox     (audio analysis for E2E tests)
 #   - python3 (E2E test harness)
 #
+# Note: z88dk is no longer included in this image to speed up the build.
+# Use the official z88dk/z88dk image for compilation.
+#
 # Build:
 #   docker build -t rc2014-build .
 #
-# Usage (compile only):
-#   docker run --rm -v $(pwd):/workspace rc2014-build \
-#     zcc +cpm -v -SO3 -O3 --opt-code-size -Iinclude \
-#     src/main.c src/core/synthesizer.c src/core/chip_manager.c \
-#     src/midi/midi_driver.c src/chips/ym2149.c -create-app -o midisynth
-#
 # Usage (full E2E):
-#   docker run --rm -v $(pwd):/workspace rc2014-build \
-#     ./tests/e2e/run_e2e.sh --headless
+#   docker run --rm -v $(pwd):/workspace -w /workspace rc2014-build \
+#     ./tests/e2e/run_e2e.sh --headless --no-build
 
 FROM ubuntu:24.04
 
 # Avoid interactive prompts during apt installs
 ENV DEBIAN_FRONTEND=noninteractive
 
-# z88dk release to build
-ARG Z88DK_VERSION=v2.4
-
-# Install z88dk build dependencies and project runtime tools in a single layer
+# Install project runtime tools and test dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        # z88dk build dependencies (per https://github.com/z88dk/z88dk/wiki/installation)
         build-essential \
-        pkg-config \
-        gawk \
-        bison \
-        flex \
-        libxml2-dev \
-        libgmp-dev \
-        libboost-dev \
-        zlib1g-dev \
-        liblzo2-dev \
-        m4 \
-        dos2unix \
-        texinfo \
+        make \
         curl \
         ca-certificates \
         # CP/M disk image tools
@@ -60,23 +40,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # ROM download (used by setup_e2e.sh)
         unzip \
     && rm -rf /var/lib/apt/lists/*
-
-# Build z88dk from source (without SDCC — sccz80 is sufficient for CP/M targets)
-RUN Z88DK_TARBALL="https://github.com/z88dk/z88dk/releases/download/${Z88DK_VERSION}/z88dk-src-${Z88DK_VERSION#v}.tgz" && \
-    curl -fSL "$Z88DK_TARBALL" -o /tmp/z88dk.tgz && \
-    tar -xzf /tmp/z88dk.tgz -C /tmp && \
-    cd /tmp/z88dk && \
-    export BUILD_SDCC=0 && \
-    export BUILD_SDCC_HTTP=0 && \
-    chmod +x build.sh && \
-    ./build.sh && \
-    mv /tmp/z88dk /opt/z88dk && \
-    rm -f /tmp/z88dk.tgz
-
-# z88dk environment
-ENV Z88DK_PATH="/opt/z88dk" \
-    PATH="/opt/z88dk/bin:${PATH}" \
-    ZCCCFG="/opt/z88dk/lib/config/"
 
 # MAME path (Ubuntu installs to /usr/games)
 ENV MAME=/usr/games/mame
@@ -118,8 +81,5 @@ RUN mkdir -p "$MAME_ROM_DIR" && \
 # Configure MAME to find the ROMs
 RUN mkdir -p /root/.mame && \
     echo "rompath /opt/mame-roms" > /root/.mame/mame.ini
-
-# Smoke-test: verify z88dk runs
-RUN zcc 2>&1 | head -1 && echo "z88dk OK"
 
 WORKDIR /workspace
