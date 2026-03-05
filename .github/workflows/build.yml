@@ -18,6 +18,7 @@ jobs:
 
       - name: Compile with z88dk
         run: |
+          docker pull z88dk/z88dk:latest
           docker run --rm -v "$(pwd):/src" -w /src z88dk/z88dk \
             zcc +cpm -v -SO3 -O3 --opt-code-size -Iinclude \
             src/main.c src/core/synthesizer.c src/core/chip_manager.c \
