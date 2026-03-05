@@ -24,7 +24,8 @@ jobs:
             src/midi/midi_driver.c src/chips/ym2149.c \
             -create-app -o midisynth
           mkdir -p dist
-          cp MIDISYNTH.COM dist/MIDISYNTH.COM
+          # Copy whatever extension/case was produced
+          cp midisynth.com dist/MIDISYNTH.COM 2>/dev/null || cp MIDISYNTH.COM dist/MIDISYNTH.COM
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
