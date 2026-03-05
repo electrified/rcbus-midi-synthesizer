@@ -20,7 +20,14 @@ HD_DEST ?= 0:midisyn.com
 all: $(COM_FILE)
 
 $(COM_FILE): $(SOURCES)
-	$(CC) $(CFLAGS) -I$(INCDIR) $(SOURCES) $(LDFLAGS) -o $(OUTPUT)
+	@if command -v $(CC) >/dev/null 2>&1; then \
+		$(CC) $(CFLAGS) -I$(INCDIR) $(SOURCES) $(LDFLAGS) -o $(OUTPUT); \
+	elif [ -f "$(COM_FILE)" ]; then \
+		echo "zcc not found, but $(COM_FILE) exists — skipping compilation"; \
+	else \
+		echo "Error: zcc (z88dk) not found and $(COM_FILE) missing — cannot build"; \
+		exit 1; \
+	fi
 
 # Disk image targets
 # We use a conditional to avoid an empty target if HD_IMAGE is not set

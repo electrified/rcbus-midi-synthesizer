@@ -26,12 +26,13 @@ HD_IMAGE="${HD_IMAGE-cheese.img}"
 BUILD_IMAGE="${BUILD_IMAGE:-rc2014-build:latest}"
 
 # ---------------------------------------------------------------------------
-# Detect whether we are inside the build container (zcc on PATH) or on the
-# host.  When on the host, re-exec the entire script inside the container.
+# Detect whether we are on the host (with docker available) and need to
+# run inside the container. If zcc is missing but docker is present, we
+# assume we are on the host. If both are missing, we are likely inside
+# our custom container which lacks z88dk but has the other tools.
 # ---------------------------------------------------------------------------
-if ! command -v zcc &>/dev/null; then
-    echo "zcc not found on PATH — running inside Docker ($BUILD_IMAGE)"
-    # Require the custom image — it contains z88dk built from source
+if ! command -v zcc &>/dev/null && command -v docker &>/dev/null; then
+    echo "zcc not found but docker is available — re-executing inside $BUILD_IMAGE"
     if ! docker image inspect "$BUILD_IMAGE" &>/dev/null; then
         echo "Image $BUILD_IMAGE not found."
         echo "Build it first with: docker build -t $BUILD_IMAGE ."
