@@ -18,15 +18,13 @@ jobs:
 
       - name: Compile with z88dk
         run: |
-          docker pull z88dk/z88dk:latest
+          # Use a glob to find all source files and output with proper CP/M casing
           docker run --rm -v "$(pwd):/src" -w /src z88dk/z88dk \
             zcc +cpm -v -SO3 -O3 --opt-code-size -Iinclude \
-            src/main.c src/core/synthesizer.c src/core/chip_manager.c \
-            src/midi/midi_driver.c src/chips/ym2149.c \
-            -create-app -o midisynth
+            src/main.c src/core/*.c src/midi/*.c src/chips/*.c \
+            -create-app -o MIDISYNTH
           mkdir -p dist
-          # Copy whatever extension/case was produced
-          cp midisynth.com dist/MIDISYNTH.COM 2>/dev/null || cp MIDISYNTH.COM dist/MIDISYNTH.COM
+          cp MIDISYNTH.COM dist/MIDISYNTH.COM
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
