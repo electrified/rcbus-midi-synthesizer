@@ -28,15 +28,21 @@ jobs:
 
           mkdir -p dist
           # Find the compiled binary regardless of case and copy it
+          # z88dk on Linux typically produces lowercase 'midisynth.com'
           COM_FILE=$(find . -maxdepth 1 -iname "midisynth.com" | head -n 1)
           if [ -z "$COM_FILE" ]; then
             echo "Error: midisynth.com not found after compilation"
             ls -la
             exit 1
           fi
+
           echo "Found compiled binary: $COM_FILE"
           cp "$COM_FILE" dist/MIDISYNTH.COM
-          cp "$COM_FILE" MIDISYNTH.COM
+
+          # Ensure root has MIDISYNTH.COM for subsequent steps (avoiding self-copy)
+          if [ "$COM_FILE" != "./MIDISYNTH.COM" ] && [ "$COM_FILE" != "MIDISYNTH.COM" ]; then
+            cp "$COM_FILE" MIDISYNTH.COM
+          fi
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
