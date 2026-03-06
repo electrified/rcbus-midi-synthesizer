@@ -257,13 +257,21 @@ fi
 
 # Discover rs232b (AUX/MIDI port) — same SIO board, port B
 discover_rs232b_slot() {
-    # Disabled for CI stability — auxiliary serial port causes timeouts
-    echo ""
+    local machine="rc2014zedp"
+    "$MAME_CMD" "$machine" -listslots 2>/dev/null \
+    | grep -oP 'bus:\S*rs232b' \
+    | head -1
 }
 
 if [[ -z "$RS232_SLOT_B" ]]; then
-    info "Auto-detecting RS232 slot B (MIDI/AUX) for rc2014zedp… (SKIPPED)"
-    RS232_SLOT_B=""
+    info "Auto-detecting RS232 slot B (MIDI/AUX) for rc2014zedp…"
+    RS232_SLOT_B="$(discover_rs232b_slot)"
+    if [[ -z "$RS232_SLOT_B" ]]; then
+        warn "Could not auto-detect RS232 slot B (MIDI)."
+        warn "BIOS MIDI tests will be skipped."
+    else
+        info "Detected RS232 slot B (MIDI): $RS232_SLOT_B"
+    fi
 else
     info "Using supplied RS232 slot B (MIDI): $RS232_SLOT_B"
 fi
@@ -388,8 +396,8 @@ MIDI_PORT="$MIDI_PORT" \
 RESULTS_DIR="$RESULTS_DIR" \
 MAME_PID=0 \
 CONNECT_TIMEOUT=90 \
-BOOT_TIMEOUT=180 \
-CMD_TIMEOUT=90 \
+BOOT_TIMEOUT=120 \
+CMD_TIMEOUT=30 \
 AUDIO_TIMEOUT=60 \
 timeout "$TEST_TIMEOUT" python3 "$SCRIPT_DIR/null_modem_terminal.py" &
 PYTHON_PID=$!
