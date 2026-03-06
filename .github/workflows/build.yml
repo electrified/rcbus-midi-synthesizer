@@ -22,8 +22,7 @@ jobs:
           # Match the filenames and flags exactly with the Makefile.
           docker run --rm -v "$(pwd):/src" -w /src z88dk/z88dk \
             zcc +cpm -v -SO3 -O3 --opt-code-size -Iinclude \
-            src/main.c src/core/synthesizer.c src/core/chip_manager.c \
-            src/midi/midi_driver.c src/chips/ym2149.c \
+            src/main.c src/core/*.c src/midi/*.c src/chips/*.c \
             -create-app -o midisynth
 
           mkdir -p dist
@@ -40,7 +39,7 @@ jobs:
           cp "$COM_FILE" dist/MIDISYNTH.COM
 
           # Ensure root has MIDISYNTH.COM for subsequent steps (avoiding self-copy)
-          if [ "$COM_FILE" != "./MIDISYNTH.COM" ] && [ "$COM_FILE" != "MIDISYNTH.COM" ]; then
+          if [[ "$COM_FILE" != *"MIDISYNTH.COM"* ]]; then
             cp "$COM_FILE" MIDISYNTH.COM
           fi
 
@@ -60,6 +59,7 @@ jobs:
           HD_IMAGE="cheese.img" BUILD_IMAGE=rc2014-build ./build_docker.sh image
           docker run --rm \
             -v "$(pwd):/workspace" -w /workspace \
+            -e BOOT_TIMEOUT=180 -e CMD_TIMEOUT=60 \
             rc2014-build \
             ./tests/e2e/run_e2e.sh --no-build --headless
         timeout-minutes: 10
