@@ -25,11 +25,18 @@ jobs:
             src/main.c src/core/synthesizer.c src/core/chip_manager.c \
             src/midi/midi_driver.c src/chips/ym2149.c \
             -create-app -o midisynth
+
           mkdir -p dist
-          # The compiler produces 'midisynth.com' on Linux.
-          # The packaging steps expect 'MIDISYNTH.COM'.
-          cp midisynth.com dist/MIDISYNTH.COM
-          cp midisynth.com MIDISYNTH.COM
+          # Find the compiled binary regardless of case and copy it
+          COM_FILE=$(find . -maxdepth 1 -iname "midisynth.com" | head -n 1)
+          if [ -z "$COM_FILE" ]; then
+            echo "Error: midisynth.com not found after compilation"
+            ls -la
+            exit 1
+          fi
+          echo "Found compiled binary: $COM_FILE"
+          cp "$COM_FILE" dist/MIDISYNTH.COM
+          cp "$COM_FILE" MIDISYNTH.COM
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
