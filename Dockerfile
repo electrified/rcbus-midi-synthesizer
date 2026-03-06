@@ -15,7 +15,7 @@
 #
 # Usage (full E2E):
 #   docker run --rm -v $(pwd):/workspace -w /workspace rc2014-build \
-#     ./tests/e2e/run_e2e.sh --headless --no-build
+#     ./tests/e2e/run_e2e.sh --headless
 
 FROM ubuntu:24.04
 

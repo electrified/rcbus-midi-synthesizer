@@ -61,7 +61,7 @@ jobs:
             -v "$(pwd):/workspace" -w /workspace \
             -e BOOT_TIMEOUT=180 -e CMD_TIMEOUT=60 \
             rc2014-build \
-            ./tests/e2e/run_e2e.sh --no-build --headless
+            ./tests/e2e/run_e2e.sh --headless
         timeout-minutes: 10
 
       - name: Upload test results

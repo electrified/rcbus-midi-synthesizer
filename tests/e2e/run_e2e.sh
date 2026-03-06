@@ -5,9 +5,8 @@
 #
 # How it works
 # ------------
-# 1. Builds the synthesizer binary inside a z88dk Docker container.
-# 2. Copies the binary onto a scratch copy of the CP/M hard-disk image.
-# 3. Boots the RC2014 emulation in MAME with its serial port wired to a
+# 1. Uses a pre-populated CP/M hard-disk image containing the binary.
+# 2. Boots the RC2014 emulation in MAME with its serial port wired to a
 #    null-modem TCP socket (see "Null-modem approach" below).
 # 4. null_modem_terminal.py connects to that socket, waits for the CP/M A>
 #    prompt, launches midisynth, runs interactive commands (h/s/i/t/q), and
@@ -36,7 +35,6 @@
 # Requirements:
 #   mame         — MAME emulator with rc2014zedp driver (0.229+, tested with 0.264)
 #   python3      — Python 3.9+ (stdlib only, no extra packages needed)
-#   docker       — for z88dk build container
 #   cpmcp/cpmls  — cpmtools package  (apt install cpmtools)
 #   sox          — optional, for audio silence detection (apt install sox)
 #
@@ -47,7 +45,6 @@
 #   ./tests/e2e/run_e2e.sh [OPTIONS]
 #
 # Options:
-#   --no-build           Skip the Docker build step (reuse existing cheese.img)
 #   --headless           Force headless mode even when a display is available
 #   --timeout N          Overall watchdog timeout in seconds (default: 300)
 #   --mame PATH          Path to the MAME binary (default: mame or $MAME env var)
@@ -71,7 +68,6 @@ RESULTS_DIR="$SCRIPT_DIR/results"
 MAME_CMD="${MAME:-$(command -v mame 2>/dev/null || command -v /usr/games/mame 2>/dev/null || echo mame)}"
 HD_IMAGE="${HD_IMAGE:-$PROJECT_DIR/cheese.img}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-300}"
-BUILD=true
 HEADLESS=false
 SERIAL_PORT="${SERIAL_PORT:-}"      # empty → auto-detect a free port
 MIDI_PORT="${MIDI_PORT:-}"          # empty → auto-detect a free port (for AUX/MIDI)
@@ -84,7 +80,6 @@ LIST_SLOTS=false
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --no-build)         BUILD=false ;;
         --headless)         HEADLESS=true ;;
         --timeout)          TEST_TIMEOUT="$2"; shift ;;
         --timeout=*)        TEST_TIMEOUT="${1#*=}" ;;
@@ -172,9 +167,6 @@ info "Checking dependencies…"
 require_cmd() { command -v "$1" &>/dev/null || fail "'$1' not found — $2"; }
 
 require_cmd "$MAME_CMD" "install MAME from https://www.mamedev.org/"
-if [[ "$BUILD" == true ]]; then
-    require_cmd docker  "install Docker from https://docs.docker.com/"
-fi
 require_cmd cpmls       "install cpmtools: apt install cpmtools"
 require_cmd cpmcp       "install cpmtools: apt install cpmtools"
 require_cmd python3     "install Python 3: apt install python3"
@@ -183,17 +175,7 @@ pass "Dependencies present"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 1: Build
-# ---------------------------------------------------------------------------
-if [[ "$BUILD" == true ]]; then
-    info "Building with z88dk Docker…"
-    cd "$PROJECT_DIR"
-    ./build_docker.sh
-    echo ""
-fi
-
-# ---------------------------------------------------------------------------
-# Step 2: Verify the disk image contains the binary
+# Step 1: Verify the disk image contains the binary
 # ---------------------------------------------------------------------------
 info "Verifying disk image…"
 
@@ -210,7 +192,7 @@ pass "Disk image OK: $LISTING"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 3: Create a scratch copy so MAME's CP/M writes do not modify master
+# Step 2: Create a scratch copy so MAME's CP/M writes do not modify master
 # ---------------------------------------------------------------------------
 mkdir -p "$RESULTS_DIR/snapshots"
 TEST_IMAGE="$RESULTS_DIR/test_run.img"
@@ -219,7 +201,7 @@ info "Scratch image: $TEST_IMAGE"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 4: Discover the RS232 slot (if not provided manually)
+# Step 3: Discover the RS232 slot (if not provided manually)
 # ---------------------------------------------------------------------------
 # mame rc2014zedp -listslots emits lines like:
 #   rc2014zedp   bus:2:sio:porta:rs232   null_modem   terminal
@@ -278,7 +260,7 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 5: Pick a free TCP port for the null-modem socket
+# Step 4: Pick a free TCP port for the null-modem socket
 # ---------------------------------------------------------------------------
 if [[ -z "$SERIAL_PORT" ]]; then
     SERIAL_PORT=$(python3 -c "
@@ -314,7 +296,7 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 6: Build the MAME command line
+# Step 5: Build the MAME command line
 # ---------------------------------------------------------------------------
 # MAME bitbanger naming rules for null_modem devices:
 #   - 1 null_modem device  → media option is -bitb
@@ -379,7 +361,7 @@ info "MAME command: $MAME_CMD ${MAME_ARGS[*]}"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 7: Start null-modem terminal server (background), then launch MAME
+# Step 6: Start null-modem terminal server (background), then launch MAME
 # ---------------------------------------------------------------------------
 # MAME's null-modem device connects as a TCP *client* to the address given
 # by -bitb.  The Python script acts as the TCP *server*: it binds to the
@@ -420,7 +402,7 @@ while [[ ! -f "$READY_FLAG" ]]; do
 done
 info "Python server is listening — launching MAME"
 
-# Step 7b: Launch MAME
+# Step 6b: Launch MAME
 info "Launching MAME in background (connecting to null-modem server on port ${SERIAL_PORT})…"
 cd "$PROJECT_DIR"
 timeout "$TEST_TIMEOUT" "$MAME_CMD" "${MAME_ARGS[@]}" >"$LOG_FILE" 2>&1 &
@@ -440,7 +422,7 @@ fi
 info "MAME running"
 
 # ---------------------------------------------------------------------------
-# Step 8: Wait for Python test script to finish (foreground wait)
+# Step 7: Wait for Python test script to finish (foreground wait)
 # ---------------------------------------------------------------------------
 info "Waiting for null_modem_terminal.py to complete tests…"
 
@@ -453,7 +435,7 @@ echo "--- serial output end ---"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 9: Wait for MAME to exit
+# Step 8: Wait for MAME to exit
 # ---------------------------------------------------------------------------
 # null_modem_terminal.py writes the done flag, which mame_test.lua picks up
 # and calls manager.machine:exit().  Give MAME a few seconds to exit cleanly.
@@ -491,7 +473,7 @@ MAME_PID=""  # Prevent cleanup trap from trying again
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 10: Verify audio recording
+# Step 9: Verify audio recording
 # ---------------------------------------------------------------------------
 info "Checking audio recording…"
 
@@ -523,7 +505,7 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 11: Evaluate test results
+# Step 10: Evaluate test results
 # ---------------------------------------------------------------------------
 info "Evaluating results…"
 
