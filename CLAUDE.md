@@ -22,7 +22,7 @@ make clean
 
 ```bash
 # One-time setup (downloads RomWBW ROM, installs cpmtools diskdef)
-./tests/e2e/setup_e2e.sh
+./setup_e2e.sh
 
 # Run tests (requires MAME, cpmtools, python3)
 MAME=/usr/games/mame ./tests/e2e/run_e2e.sh --no-build --headless

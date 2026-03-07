@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         sox \
         # E2E test harness
         python3 \
-        # ROM download (used by setup_e2e.sh)
+        # ROM download (matches logic in setup_e2e.sh)
         unzip \
     && rm -rf /var/lib/apt/lists/*
 
