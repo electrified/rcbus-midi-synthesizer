@@ -36,6 +36,7 @@ static uint8_t bios_auxist(void) __naked {
         in a, (0x83)        ; read RR0
         and 1               ; isolate bit 0 (Rx Char Available)
         ld l, a             ; return in L
+        ld h, 0             ; clear H so HL = uint8_t return value
         ret
     __endasm;
 }
@@ -45,6 +46,7 @@ static uint8_t bios_auxin(void) __naked {
     __asm
         in a, (0x82)        ; read SIO Ch.B data register
         ld l, a             ; return in L
+        ld h, 0             ; clear H so HL = uint8_t return value
         ret
     __endasm;
 }
