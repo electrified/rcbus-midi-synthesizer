@@ -22,8 +22,8 @@ static uint8_t kb_last_note = 0xFF;       // Last note played (for note-off)
 // bypass HBIOS entirely and read the SIO registers directly.
 //
 // RC2014 Z80-SIO port map (base 0x80):
-//   0x80 = Channel A data    0x81 = Channel A control
-//   0x82 = Channel B data    0x83 = Channel B control
+//   0x80 = Channel A control  0x81 = Channel A data
+//   0x82 = Channel B control  0x83 = Channel B data
 //
 // RR0 bit 0 = Rx Character Available.
 // Writing 0x00 to the control port selects RR0 for the next read.
@@ -32,8 +32,8 @@ static uint8_t kb_last_note = 0xFF;       // Last note played (for note-off)
 static uint8_t bios_auxist(void) __naked {
     __asm
         xor a               ; A = 0 → select RR0
-        out (0x83), a       ; SIO Ch.B control: point to RR0
-        in a, (0x83)        ; read RR0
+        out (0x82), a       ; SIO Ch.B control: point to RR0
+        in a, (0x82)        ; read RR0
         and 1               ; isolate bit 0 (Rx Char Available)
         ld l, a             ; return in L
         ld h, 0             ; clear H so HL = uint8_t return value
@@ -44,7 +44,7 @@ static uint8_t bios_auxist(void) __naked {
 // Read one byte from SIO Channel B data register
 static uint8_t bios_auxin(void) __naked {
     __asm
-        in a, (0x82)        ; read SIO Ch.B data register
+        in a, (0x83)        ; read SIO Ch.B data register
         ld l, a             ; return in L
         ld h, 0             ; clear H so HL = uint8_t return value
         ret
