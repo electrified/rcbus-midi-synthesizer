@@ -51,6 +51,38 @@ static uint8_t bios_auxin(void) __naked {
     __endasm;
 }
 
+// Initialize SIO Channel B for receiving data.
+// MAME's Z80-SIO requires WR3 Rx Enable to be set before incoming
+// bytes are accepted.  RomWBW may not enable the Channel B receiver,
+// so we configure it explicitly when entering BIOS MIDI mode.
+static void sio_chb_init(void) __naked {
+    __asm
+        ; Channel Reset (WR0 command 011)
+        ld a, 0x18          ; WR0: Channel Reset
+        out (0x82), a
+
+        ; WR4: x16 clock, 1 stop bit, no parity
+        ld a, 0x04          ; WR0: point to WR4
+        out (0x82), a
+        ld a, 0x44          ; WR4: 01 (x16) 00 (1 stop) 0 (no parity) 100
+        out (0x82), a
+
+        ; WR3: Rx 8 bits, Rx Enable
+        ld a, 0x03          ; WR0: point to WR3
+        out (0x82), a
+        ld a, 0xC1          ; WR3: 11 (8 bits) 000000 1 (Rx Enable)
+        out (0x82), a
+
+        ; WR5: DTR, Tx 8 bits, Tx Enable, RTS
+        ld a, 0x05          ; WR0: point to WR5
+        out (0x82), a
+        ld a, 0xEA          ; WR5: 1(DTR) 11(8 bits) 0 1(TxEn) 0 1(RTS) 0
+        out (0x82), a
+
+        ret
+    __endasm;
+}
+
 // Initialize MIDI driver
 void midi_driver_init(void) {
     // Clear MIDI state
@@ -87,6 +119,9 @@ void midi_driver_init(void) {
 
 // Set MIDI input mode
 void midi_set_mode(uint8_t mode) {
+    if (mode == MIDI_MODE_BIOS) {
+        sio_chb_init();
+    }
     midi_mode = mode;
 }
 
