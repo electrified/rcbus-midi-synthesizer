@@ -124,7 +124,7 @@ Automated end-to-end tests run the synthesizer inside MAME's RC2014 emulation us
 sudo apt install mame cpmtools python3 sox
 
 # One-time setup: download RomWBW ROM and install cpmtools disk format
-./tests/e2e/setup_e2e.sh
+./setup_e2e.sh
 ```
 
 ### Running the Tests
@@ -205,12 +205,12 @@ include/
   ym2149.h            — YM2149 registers, voice extras, frequency defines
   port_config.h       — I/O port configuration
 build_docker.sh       — Docker-based build script
+setup_e2e.sh          — One-time ROM + diskdef setup
 Makefile              — Local z88dk build
 tests/e2e/
   run_e2e.sh          — E2E test orchestrator
   null_modem_terminal.py — TCP server for null-modem serial I/O
   mame_test.lua       — MAME Lua watchdog (polls done-flag, exits MAME)
-  setup_e2e.sh        — One-time ROM + diskdef setup
 ```
 
 ## Future Development

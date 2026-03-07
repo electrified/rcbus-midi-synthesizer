@@ -39,7 +39,7 @@
 #   sox          — optional, for audio silence detection (apt install sox)
 #
 # One-time setup (RC2014 ROM + wbw_hd512 diskdef):
-#   ./tests/e2e/setup_e2e.sh
+#   ./setup_e2e.sh
 #
 # Usage:
 #   ./tests/e2e/run_e2e.sh [OPTIONS]
