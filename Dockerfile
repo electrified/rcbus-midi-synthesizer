@@ -61,7 +61,7 @@ end\n' >> /etc/cpmtools/diskdefs
 # ---------------------------------------------------------------------------
 # RomWBW ROM and CP/M system tracks for MAME E2E tests
 # ---------------------------------------------------------------------------
-ARG ROMWBW_VERSION=3.5.1
+ARG ROMWBW_VERSION=3.0.1
 ARG MAME_ROM_DIR=/opt/mame-roms/rc2014zedp
 
 RUN mkdir -p "$MAME_ROM_DIR" && \
@@ -73,13 +73,12 @@ RUN mkdir -p "$MAME_ROM_DIR" && \
     # Extract the RC2014 Z80 standard ROM
     ROM_PATH=$(unzip -Z1 /tmp/romwbw.zip | grep -i 'Binary/RCZ80_std\.rom$' | head -1) && \
     unzip -p /tmp/romwbw.zip "$ROM_PATH" > "$MAME_ROM_DIR/rcz80_std_3_0_1.rom" && \
-    # Extract blank HD image (pre-formatted wbw_hd512 CP/M disk, no system tracks needed)
-    BLANK_PATH=$(unzip -Z1 /tmp/romwbw.zip | grep -i 'Binary/hd512_blank\.img$' | head -1) && \
-    unzip -p /tmp/romwbw.zip "$BLANK_PATH" > "$MAME_ROM_DIR/hd512_blank.img" && \
     rm -f /tmp/romwbw.zip
 
-# Configure MAME to find the ROMs
-RUN mkdir -p /root/.mame && \
-    echo "rompath /opt/mame-roms" > /root/.mame/mame.ini
+# Copy blank HD image from repo (not available in RomWBW 3.0.1 package)
+COPY hd512_blank.img $MAME_ROM_DIR/hd512_blank.img
+
+# MAME ROM path is specified via -rompath on the command line (in run_e2e.sh),
+# so no global mame.ini configuration is needed.
 
 WORKDIR /workspace

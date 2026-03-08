@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-ROMWBW_VERSION="${ROMWBW_VERSION:-3.5.1}"
+ROMWBW_VERSION="${ROMWBW_VERSION:-3.0.1}"
 MAME_ROM_DIR="/opt/mame-roms/rc2014zedp"
 
 SUDO=""
@@ -66,34 +66,44 @@ install_mame() {
 }
 
 install_romwbw() {
-    info "Installing RomWBW $ROMWBW_VERSION ROM and blank disk image..."
+    info "Installing RomWBW $ROMWBW_VERSION ROM..."
+    info "  RomWBW version: $ROMWBW_VERSION"
     $SUDO mkdir -p "$MAME_ROM_DIR"
 
     local tmp_zip="/tmp/romwbw.zip"
+    local url1="https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-v${ROMWBW_VERSION}-Package.zip"
+    local url2="https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-${ROMWBW_VERSION}-Package.zip"
 
     info "  Downloading RomWBW package..."
-    ( curl -fsSL "https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-v${ROMWBW_VERSION}-Package.zip" -o "$tmp_zip" || \
-      curl -fsSL "https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-${ROMWBW_VERSION}-Package.zip" -o "$tmp_zip" )
+    info "  Trying: $url1"
+    if curl -fsSL "$url1" -o "$tmp_zip"; then
+        info "  Downloaded from: $url1"
+    else
+        info "  Trying: $url2"
+        curl -fsSL "$url2" -o "$tmp_zip"
+        info "  Downloaded from: $url2"
+    fi
 
     info "  Extracting ROM..."
     local rom_path=$(unzip -Z1 "$tmp_zip" | grep -i 'Binary/RCZ80_std\.rom$' | head -1)
     unzip -p "$tmp_zip" "$rom_path" | $SUDO tee "$MAME_ROM_DIR/rcz80_std_3_0_1.rom" > /dev/null
 
-    info "  Extracting blank HD image..."
-    local blank_path=$(unzip -Z1 "$tmp_zip" | grep -i 'Binary/hd512_blank\.img$' | head -1)
-    unzip -p "$tmp_zip" "$blank_path" | $SUDO tee "$MAME_ROM_DIR/hd512_blank.img" > /dev/null
-
     rm -f "$tmp_zip"
 
-    info "  Configuring MAME..."
-    mkdir -p "$HOME/.mame"
-    if [ ! -f "$HOME/.mame/mame.ini" ]; then
-        echo "rompath /opt/mame-roms" > "$HOME/.mame/mame.ini"
-    elif ! grep -q "rompath /opt/mame-roms" "$HOME/.mame/mame.ini"; then
-        echo "rompath /opt/mame-roms" >> "$HOME/.mame/mame.ini"
+    # Copy blank HD image from repo (not available in RomWBW 3.0.1 package)
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local blank_src="$script_dir/hd512_blank.img"
+    if [ -f "$blank_src" ]; then
+        info "  Copying blank HD image from repo..."
+        $SUDO cp "$blank_src" "$MAME_ROM_DIR/hd512_blank.img"
+    else
+        fail "hd512_blank.img not found in repo at $blank_src"
     fi
 
-    pass "RomWBW and MAME configuration complete."
+    info "  ROM dir: $MAME_ROM_DIR"
+    info "  Use -rompath $(dirname "$MAME_ROM_DIR") on the MAME command line."
+    pass "RomWBW installation complete."
 }
 
 # MAIN

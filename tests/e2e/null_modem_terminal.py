@@ -492,43 +492,48 @@ def run_tests() -> bool:
         # ------------------------------------------------------------------
         # 2. Wait for RomWBW boot loader and select boot disk
         # ------------------------------------------------------------------
+        # RomWBW 3.0.x uses "Boot Selection?" while 3.5.x uses "Boot [H=Help]:"
+        boot_prompt = os.environ.get("BOOT_PROMPT", "Boot Selection?")
         log(f"Waiting for RomWBW boot loader (up to {BOOT_TIMEOUT}s) …")
+        log(f"Looking for prompt: '{boot_prompt}'")
         try:
-            boot_loader_out = term.wait_for("Boot [H=Help]:", timeout=BOOT_TIMEOUT)
+            boot_loader_out = term.wait_for(boot_prompt, timeout=BOOT_TIMEOUT)
             log("RomWBW boot loader reached")
             check("RomWBW HBIOS" in boot_loader_out,
                   "boot: RomWBW HBIOS banner present")
         except TimeoutError as exc:
             log(f"ERROR: {exc}")
             write_result(False,
-                         "RomWBW boot loader did not appear "
-                         "(no 'Boot [H=Help]:' seen)")
+                         f"RomWBW boot loader did not appear "
+                         f"(no '{boot_prompt}' seen)")
             return False
 
-        # RomWBW lists disks and waits for input.  Typing 'c' at the
+        # RomWBW lists disks and waits for input.  Typing 'C' at the
         # boot prompt launches CP/M from ROM.  The hard disk (IDE0)
         # with our program does not need system tracks — it is
         # mapped as C: when booting from ROM disk.
         #
         # Disk layout (default rc2014zedp):
-        #   Disk 0  MD0   RAM Disk
-        #   Disk 1  MD1   ROM Disk
+        #   Disk 0  MD1   ROM Disk
+        #   Disk 1  MD0   RAM Disk
         #   Disk 2  IDE0  Hard Disk (CF) → mapped as C:
-        boot_cmd = os.environ.get("BOOT_DISK", "c")
+        boot_cmd = os.environ.get("BOOT_DISK", "C")
         log(f"Sending '{boot_cmd}' to boot CP/M from ROM …")
         time.sleep(0.5)
         term.send(boot_cmd + "\r")
 
         # ------------------------------------------------------------------
-        # 3. Wait for CP/M B> prompt
+        # 3. Wait for CP/M prompt
         # ------------------------------------------------------------------
-        log("Waiting for CP/M B> prompt …")
+        # RomWBW 3.0.x boots to A>, 3.5.x boots to B>.
+        cpm_prompt = os.environ.get("CPM_PROMPT", "B>")
+        log(f"Waiting for CP/M {cpm_prompt} prompt …")
         try:
-            boot_out = term.wait_for("B>", timeout=BOOT_TIMEOUT)
-            log("CP/M boot complete — got B> prompt")
+            boot_out = term.wait_for(cpm_prompt, timeout=BOOT_TIMEOUT)
+            log(f"CP/M boot complete — got {cpm_prompt} prompt")
         except TimeoutError as exc:
             log(f"ERROR: {exc}")
-            write_result(False, "CP/M did not boot (no B> prompt seen)")
+            write_result(False, f"CP/M did not boot (no {cpm_prompt} prompt seen)")
             return False
 
         # Small pause after boot to let CP/M settle
@@ -538,8 +543,7 @@ def run_tests() -> bool:
         # ------------------------------------------------------------------
         # 4. Launch midisynth
         # ------------------------------------------------------------------
-        # After booting from ROM disk, A:=MD1 (ROM), C:=IDE0 (CF).
-        # Switch to C: where midisyn.com lives on the hard disk.
+        # After booting CP/M, IDE0 (CF) hard disk is mapped as C:.
         log("Switching to C: drive (IDE0 hard disk) …")
         term.send("C:\r")
         try:

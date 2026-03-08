@@ -50,6 +50,7 @@
 #   --mame PATH          Path to the MAME binary (default: mame or $MAME env var)
 #   --serial-port PORT   TCP port for the null-modem socket (default: auto)
 #   --rs232-slot SLOT    MAME slot name for the RS232 port (default: auto-detect)
+#   --rompath PATH       MAME ROM search path (default: /opt/mame-roms or $MAME_ROMPATH)
 #   --list-slots         Print MAME -listslots output for rc2014zedp and exit
 #   -h, --help           Show this help and exit
 
@@ -73,6 +74,7 @@ SERIAL_PORT="${SERIAL_PORT:-}"      # empty → auto-detect a free port
 MIDI_PORT="${MIDI_PORT:-}"          # empty → auto-detect a free port (for AUX/MIDI)
 RS232_SLOT="${RS232_SLOT:-}"        # empty → auto-discover via mame -listslots
 RS232_SLOT_B="${RS232_SLOT_B:-}"    # empty → auto-discover rs232b via mame -listslots
+MAME_ROMPATH="${MAME_ROMPATH:-/opt/mame-roms}"
 LIST_SLOTS=false
 
 # ---------------------------------------------------------------------------
@@ -93,6 +95,8 @@ while [[ $# -gt 0 ]]; do
         --rs232-slot=*)     RS232_SLOT="${1#*=}" ;;
         --rs232-slot-b)     RS232_SLOT_B="$2"; shift ;;
         --rs232-slot-b=*)   RS232_SLOT_B="${1#*=}" ;;
+        --rompath)          MAME_ROMPATH="$2"; shift ;;
+        --rompath=*)        MAME_ROMPATH="${1#*=}" ;;
         --list-slots)       LIST_SLOTS=true ;;
         -h|--help)
             sed -n '/^# /p' "$0" | sed 's/^# \?//'
@@ -146,6 +150,7 @@ echo "=== RC2014 MIDI Synthesizer — MAME E2E Test (null-modem) ==="
 info "Project dir : $PROJECT_DIR"
 info "Disk image  : $HD_IMAGE"
 info "MAME        : $MAME_CMD"
+info "ROM path    : $MAME_ROMPATH"
 info "Headless    : $HEADLESS"
 info "Timeout     : ${TEST_TIMEOUT}s"
 echo ""
@@ -305,6 +310,7 @@ echo ""
 
 MAME_ARGS=(
     rc2014zedp
+    -rompath "$MAME_ROMPATH"
     -bus:5  cf
     -hard   "$TEST_IMAGE"
     -bus:12 ay_sound

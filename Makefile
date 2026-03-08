@@ -13,7 +13,7 @@ COM_FILE = MIDISYNTH.COM
 
 # Disk image settings
 HD_IMAGE ?= cheese.img
-BLANK_HD_IMAGE = /opt/mame-roms/rc2014zedp/hd512_blank.img
+BLANK_HD_IMAGE ?= hd512_blank.img
 HD_DEST ?= 0:midisyn.com
 
 # Standard build
