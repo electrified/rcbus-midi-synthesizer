@@ -707,10 +707,13 @@ def run_tests() -> bool:
             log("  Sending MIDI Note On (note 60, vel 100) via AUX port …")
             midi_term.send_raw(bytes([0x90, 0x3C, 0x64]))
             try:
-                midi_on_out = term.wait_for("MIDI IN: Note On 60 vel 100", timeout=CMD_TIMEOUT)
+                term.wait_for("MIDI IN: Note On 60 vel 100", timeout=CMD_TIMEOUT)
                 check(True, "bios midi: note-on received via AUX")
             except TimeoutError as exc:
                 log(f"ERROR: {exc}")
+                # Drain and log whatever we got
+                term._drain()
+                log(f"  Console buffer after timeout: {term._buf[-300:]!r}")
                 check(False, "bios midi: note-on received via AUX")
 
             # Send MIDI Note Off: channel 0, note 60

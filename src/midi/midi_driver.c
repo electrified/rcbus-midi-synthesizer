@@ -55,28 +55,57 @@ static uint8_t bios_auxin(void) __naked {
 // MAME's Z80-SIO requires WR3 Rx Enable to be set before incoming
 // bytes are accepted.  RomWBW may not enable the Channel B receiver,
 // so we configure it explicitly when entering BIOS MIDI mode.
+//
+// We avoid a full channel reset (WR0 command 0x18) because that
+// clears the baud rate clock linkage in MAME's SIO emulation.
+//
+// CRITICAL: WR1 must be set to 0x00 to disable all interrupts on
+// Channel B.  RomWBW HBIOS enables Rx interrupts for both SIO
+// channels; its ISR reads incoming bytes before our polling code
+// can see them.  Disabling interrupts ensures we can poll RR0/data
+// directly.
+//
+// WR4 MUST be set to async mode (non-zero stop bits field) — if WR4
+// defaults to 0x00, the SIO enters sync mode and never receives
+// async data.  We use x64 clock divisor with CLK2 at 7.3728 MHz
+// to get 115200 baud, matching the null_modem/MAME configuration.
+// WR4 must be written before WR3 and WR5 per Z80-SIO datasheet.
 static void sio_chb_init(void) __naked {
     __asm
-        ; Channel Reset (WR0 command 011)
-        ld a, 0x18          ; WR0: Channel Reset
+        ; Reset register pointer to WR0
+        xor a
         out (0x82), a
 
-        ; WR4: x16 clock, 1 stop bit, no parity
-        ld a, 0x04          ; WR0: point to WR4
+        ; Error Reset (WR0 command 011-0 = 0x30)
+        ld a, 0x30
         out (0x82), a
-        ld a, 0x44          ; WR4: 01 (x16) 00 (1 stop) 0 (no parity) 100
+
+        ; WR1: Disable all interrupts on Channel B
+        ; RomWBW HBIOS enables Rx interrupts; its ISR would consume
+        ; incoming bytes before our polling code can see them.
+        ; Setting WR1=0x00 disables Ext, Tx, and Rx interrupts.
+        ld a, 0x01
+        out (0x82), a
+        xor a               ; WR1 = 0x00: all interrupts disabled
+        out (0x82), a
+
+        ; WR4: x64 clock, 1 stop bit, no parity (MUST be set before WR3/WR5)
+        ; x64 with 7.3728 MHz CLK2 = 115200 baud
+        ld a, 0x04
+        out (0x82), a
+        ld a, 0xC4          ; WR4: 11 (x64) 00 (1 stop) 0 (no parity) 100
         out (0x82), a
 
         ; WR3: Rx 8 bits, Rx Enable
-        ld a, 0x03          ; WR0: point to WR3
+        ld a, 0x03
         out (0x82), a
-        ld a, 0xC1          ; WR3: 11 (8 bits) 000000 1 (Rx Enable)
+        ld a, 0xC1          ; WR3: 11 (Rx 8 bits) 000001 (Rx Enable)
         out (0x82), a
 
         ; WR5: DTR, Tx 8 bits, Tx Enable, RTS
-        ld a, 0x05          ; WR0: point to WR5
+        ld a, 0x05
         out (0x82), a
-        ld a, 0xEA          ; WR5: 1(DTR) 11(8 bits) 0 1(TxEn) 0 1(RTS) 0
+        ld a, 0xEA          ; WR5: DTR, 8-bit Tx, TxEn, RTS
         out (0x82), a
 
         ret

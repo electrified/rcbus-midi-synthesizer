@@ -311,6 +311,9 @@ echo ""
 MAME_ARGS=(
     rc2014zedp
     -rompath "$MAME_ROMPATH"
+    # Use a temporary cfg directory so saved MAME configuration (e.g. clock
+    # divider overrides from interactive sessions) cannot affect test results.
+    -cfg_directory "$RESULTS_DIR/mame_cfg"
     -bus:5  cf
     -hard   "$TEST_IMAGE"
     -bus:12 ay_sound
