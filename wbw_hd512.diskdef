@@ -1,0 +1,12 @@
+
+# RomWBW 8320KB Hard Disk Slice (512 directory entry format)
+diskdef wbw_hd512
+    seclen 512
+    tracks 1040
+    sectrk 16
+    blocksize 4096
+    maxdir 512
+    skew 0
+    boottrk 16
+    os 2.2
+end

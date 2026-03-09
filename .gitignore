@@ -16,11 +16,11 @@
 *.img
 !hd512_blank.img
 
-
-
 # MAME ROM directory (created by E2E setup when run inside Docker)
 roms/
 
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+tests/e2e/results

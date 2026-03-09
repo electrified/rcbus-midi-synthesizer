@@ -8,7 +8,7 @@
 *.hex
 *.map
 *.img
-
+!hd512_blank.img
 
 # Test results (regenerated each run)
 tests/e2e/results/

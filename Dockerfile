@@ -45,18 +45,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV MAME=/usr/games/mame
 
 # Install the wbw_hd512 diskdef so cpmtools can work with RomWBW images
-RUN printf '\n\
-# RomWBW 8320KB Hard Disk Slice (512 directory entry format)\n\
-diskdef wbw_hd512\n\
-    seclen 512\n\
-    tracks 1040\n\
-    sectrk 16\n\
-    blocksize 4096\n\
-    maxdir 512\n\
-    skew 0\n\
-    boottrk 16\n\
-    os 2.2\n\
-end\n' >> /etc/cpmtools/diskdefs
+COPY wbw_hd512.diskdef /tmp/wbw_hd512.diskdef
+RUN cat /tmp/wbw_hd512.diskdef >> /etc/cpmtools/diskdefs && rm /tmp/wbw_hd512.diskdef
 
 # ---------------------------------------------------------------------------
 # RomWBW ROM and CP/M system tracks for MAME E2E tests
@@ -65,11 +55,8 @@ ARG ROMWBW_VERSION=3.0.1
 ARG MAME_ROM_DIR=/opt/mame-roms/rc2014zedp
 
 RUN mkdir -p "$MAME_ROM_DIR" && \
-    # Try both URL patterns (with and without 'v' prefix in the asset name)
-    ( curl -fsSL "https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-v${ROMWBW_VERSION}-Package.zip" \
-          -o /tmp/romwbw.zip || \
-      curl -fsSL "https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-${ROMWBW_VERSION}-Package.zip" \
-          -o /tmp/romwbw.zip ) && \
+    curl -fsSL "https://github.com/wwarthen/RomWBW/releases/download/v${ROMWBW_VERSION}/RomWBW-v${ROMWBW_VERSION}-Package.zip" \
+          -o /tmp/romwbw.zip && \
     # Extract the RC2014 Z80 standard ROM
     ROM_PATH=$(unzip -Z1 /tmp/romwbw.zip | grep -i 'Binary/RCZ80_std\.rom$' | head -1) && \
     unzip -p /tmp/romwbw.zip "$ROM_PATH" > "$MAME_ROM_DIR/rcz80_std_3_0_1.rom" && \
